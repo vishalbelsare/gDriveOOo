@@ -1,3 +1,4 @@
+from types import UnionType
 from typing import (
     Any,
     AnyStr,
@@ -5,25 +6,23 @@ from typing import (
     Container,
     ContextManager,
     Iterable,
-    List,
     Mapping,
     Match,
-    Optional,
     Pattern,
-    Tuple,
-    Type,
     TypeVar,
-    Union,
     overload,
 )
 
-from . import _ValidatorType
-from . import _ValidatorArgType
+from attrs import _ValidatorType
+from attrs import _ValidatorArgType
 
 _T = TypeVar("_T")
 _T1 = TypeVar("_T1")
 _T2 = TypeVar("_T2")
 _T3 = TypeVar("_T3")
+_T4 = TypeVar("_T4")
+_T5 = TypeVar("_T5")
+_T6 = TypeVar("_T6")
 _I = TypeVar("_I", bound=Iterable)
 _K = TypeVar("_K")
 _V = TypeVar("_V")
@@ -36,42 +35,50 @@ def disabled() -> ContextManager[None]: ...
 # To be more precise on instance_of use some overloads.
 # If there are more than 3 items in the tuple then we fall back to Any
 @overload
-def instance_of(type: Type[_T]) -> _ValidatorType[_T]: ...
+def instance_of(type: type[_T]) -> _ValidatorType[_T]: ...
 @overload
-def instance_of(type: Tuple[Type[_T]]) -> _ValidatorType[_T]: ...
-@overload
-def instance_of(
-    type: Tuple[Type[_T1], Type[_T2]]
-) -> _ValidatorType[Union[_T1, _T2]]: ...
+def instance_of(type: tuple[type[_T]]) -> _ValidatorType[_T]: ...
 @overload
 def instance_of(
-    type: Tuple[Type[_T1], Type[_T2], Type[_T3]]
-) -> _ValidatorType[Union[_T1, _T2, _T3]]: ...
+    type: tuple[type[_T1], type[_T2]],
+) -> _ValidatorType[_T1 | _T2]: ...
 @overload
-def instance_of(type: Tuple[type, ...]) -> _ValidatorType[Any]: ...
-def provides(interface: Any) -> _ValidatorType[Any]: ...
+def instance_of(
+    type: tuple[type[_T1], type[_T2], type[_T3]],
+) -> _ValidatorType[_T1 | _T2 | _T3]: ...
+@overload
+def instance_of(type: tuple[type, ...]) -> _ValidatorType[Any]: ...
+@overload
+def instance_of(type: UnionType) -> _ValidatorType[Any]: ...
 def optional(
-    validator: Union[
-        _ValidatorType[_T], List[_ValidatorType[_T]], Tuple[_ValidatorType[_T]]
-    ]
-) -> _ValidatorType[Optional[_T]]: ...
+    validator: (
+        _ValidatorType[_T]
+        | list[_ValidatorType[_T]]
+        | tuple[_ValidatorType[_T], ...]
+    ),
+) -> _ValidatorType[_T | None]: ...
 def in_(options: Container[_T]) -> _ValidatorType[_T]: ...
 def and_(*validators: _ValidatorType[_T]) -> _ValidatorType[_T]: ...
 def matches_re(
-    regex: Union[Pattern[AnyStr], AnyStr],
+    regex: Pattern[AnyStr] | AnyStr,
     flags: int = ...,
-    func: Optional[
-        Callable[[AnyStr, AnyStr, int], Optional[Match[AnyStr]]]
-    ] = ...,
+    func: Callable[[AnyStr, AnyStr, int], Match[AnyStr] | None] | None = ...,
 ) -> _ValidatorType[AnyStr]: ...
 def deep_iterable(
     member_validator: _ValidatorArgType[_T],
-    iterable_validator: Optional[_ValidatorType[_I]] = ...,
+    iterable_validator: _ValidatorArgType[_I] | None = ...,
 ) -> _ValidatorType[_I]: ...
+@overload
 def deep_mapping(
-    key_validator: _ValidatorType[_K],
-    value_validator: _ValidatorType[_V],
-    mapping_validator: Optional[_ValidatorType[_M]] = ...,
+    key_validator: _ValidatorArgType[_K],
+    value_validator: _ValidatorArgType[_V] | None = ...,
+    mapping_validator: _ValidatorArgType[_M] | None = ...,
+) -> _ValidatorType[_M]: ...
+@overload
+def deep_mapping(
+    key_validator: _ValidatorArgType[_K] | None = ...,
+    value_validator: _ValidatorArgType[_V] = ...,
+    mapping_validator: _ValidatorArgType[_M] | None = ...,
 ) -> _ValidatorType[_M]: ...
 def is_callable() -> _ValidatorType[_T]: ...
 def lt(val: _T) -> _ValidatorType[_T]: ...
@@ -83,6 +90,51 @@ def min_len(length: int) -> _ValidatorType[_T]: ...
 def not_(
     validator: _ValidatorType[_T],
     *,
-    msg: Optional[str] = None,
-    exc_types: Union[Type[Exception], Iterable[Type[Exception]]] = ...,
+    msg: str | None = None,
+    exc_types: type[Exception] | Iterable[type[Exception]] = ...,
 ) -> _ValidatorType[_T]: ...
+@overload
+def or_(
+    __v1: _ValidatorType[_T1],
+    __v2: _ValidatorType[_T2],
+) -> _ValidatorType[_T1 | _T2]: ...
+@overload
+def or_(
+    __v1: _ValidatorType[_T1],
+    __v2: _ValidatorType[_T2],
+    __v3: _ValidatorType[_T3],
+) -> _ValidatorType[_T1 | _T2 | _T3]: ...
+@overload
+def or_(
+    __v1: _ValidatorType[_T1],
+    __v2: _ValidatorType[_T2],
+    __v3: _ValidatorType[_T3],
+    __v4: _ValidatorType[_T4],
+) -> _ValidatorType[_T1 | _T2 | _T3 | _T4]: ...
+@overload
+def or_(
+    __v1: _ValidatorType[_T1],
+    __v2: _ValidatorType[_T2],
+    __v3: _ValidatorType[_T3],
+    __v4: _ValidatorType[_T4],
+    __v5: _ValidatorType[_T5],
+) -> _ValidatorType[_T1 | _T2 | _T3 | _T4 | _T5]: ...
+@overload
+def or_(
+    __v1: _ValidatorType[_T1],
+    __v2: _ValidatorType[_T2],
+    __v3: _ValidatorType[_T3],
+    __v4: _ValidatorType[_T4],
+    __v5: _ValidatorType[_T5],
+    __v6: _ValidatorType[_T6],
+) -> _ValidatorType[_T1 | _T2 | _T3 | _T4 | _T5 | _T6]: ...
+@overload
+def or_(
+    __v1: _ValidatorType[Any],
+    __v2: _ValidatorType[Any],
+    __v3: _ValidatorType[Any],
+    __v4: _ValidatorType[Any],
+    __v5: _ValidatorType[Any],
+    __v6: _ValidatorType[Any],
+    *validators: _ValidatorType[Any],
+) -> _ValidatorType[Any]: ...

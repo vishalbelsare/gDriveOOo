@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import base64
 import copy
 import logging
@@ -7,8 +9,10 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from rdflib.query import Result
+from rdflib.plugin import plugins
+from rdflib.query import Result, ResultParser
 from rdflib.term import BNode
+from rdflib.util import FORMAT_MIMETYPE_MAP, RESPONSE_TABLE_FORMAT_MIMETYPE_MAP
 
 log = logging.getLogger(__name__)
 
@@ -20,17 +24,7 @@ class SPARQLConnectorException(Exception):  # noqa: N818
     pass
 
 
-# TODO: Pull in these from the result implementation plugins?
-_response_mime_types = {
-    "xml": "application/sparql-results+xml, application/rdf+xml",
-    "json": "application/sparql-results+json",
-    "csv": "text/csv",
-    "tsv": "text/tab-separated-values",
-    "application/rdf+xml": "application/rdf+xml",
-}
-
-
-class SPARQLConnector(object):
+class SPARQLConnector:
     """
     this class deals with nitty gritty details of talking to a SPARQL server
     """
@@ -39,15 +33,15 @@ class SPARQLConnector(object):
         self,
         query_endpoint: Optional[str] = None,
         update_endpoint: Optional[str] = None,
-        returnFormat: str = "xml",  # noqa: N803
-        method: "te.Literal['GET', 'POST', 'POST_FORM']" = "GET",
+        returnFormat: Optional[str] = "xml",  # noqa: N803
+        method: te.Literal["GET", "POST", "POST_FORM"] = "GET",
         auth: Optional[Tuple[str, str]] = None,
         **kwargs,
     ):
         """
         auth, if present, must be a tuple of (username, password) used for Basic Authentication
 
-        Any additional keyword arguments will be passed to to the request, and can be used to setup timesouts etc.
+        Any additional keyword arguments will be passed to to the request, and can be used to setup timeouts etc.
         """
         self._method: str
         self.returnFormat = returnFormat
@@ -56,7 +50,7 @@ class SPARQLConnector(object):
         self.kwargs = kwargs
         self.method = method
         if auth is not None:
-            if type(auth) != tuple:
+            if type(auth) is not tuple:
                 raise SPARQLConnectorException("auth must be a tuple")
             if len(auth) != 2:
                 raise SPARQLConnectorException("auth must be a tuple (user, password)")
@@ -84,16 +78,16 @@ class SPARQLConnector(object):
         query: str,
         default_graph: Optional[str] = None,
         named_graph: Optional[str] = None,
-    ) -> "Result":
+    ) -> Result:
         if not self.query_endpoint:
             raise SPARQLConnectorException("Query endpoint not set!")
 
         params = {}
         # this test ensures we don't have a useless (BNode) default graph URI, which calls to Graph().query() will add
-        if default_graph is not None and type(default_graph) != BNode:
+        if default_graph is not None and type(default_graph) is not BNode:
             params["default-graph-uri"] = default_graph
 
-        headers = {"Accept": _response_mime_types[self.returnFormat]}
+        headers = {"Accept": self.response_mime_types()}
 
         args = copy.deepcopy(self.kwargs)
 
@@ -168,7 +162,7 @@ class SPARQLConnector(object):
             params["using-named-graph-uri"] = named_graph
 
         headers = {
-            "Accept": _response_mime_types[self.returnFormat],
+            "Accept": self.response_mime_types(),
             "Content-Type": "application/sparql-update; charset=UTF-8",
         }
 
@@ -185,3 +179,28 @@ class SPARQLConnector(object):
                 self.update_endpoint + qsa, data=query.encode(), headers=args["headers"]
             )
         )
+
+    def response_mime_types(self) -> str:
+        """Construct a HTTP-Header Accept field to reflect the supported mime types.
+
+        If the return_format parameter is set, the mime types are restricted to these accordingly.
+        """
+        sparql_format_mimetype_map = {
+            k: FORMAT_MIMETYPE_MAP.get(k, [])
+            + RESPONSE_TABLE_FORMAT_MIMETYPE_MAP.get(k, [])
+            for k in list(FORMAT_MIMETYPE_MAP.keys())
+            + list(RESPONSE_TABLE_FORMAT_MIMETYPE_MAP.keys())
+        }
+
+        supported_formats = set()
+        for plugin in plugins(name=self.returnFormat, kind=ResultParser):
+            if "/" not in plugin.name:
+                supported_formats.update(
+                    sparql_format_mimetype_map.get(plugin.name, [])
+                )
+            else:
+                supported_formats.add(plugin.name)
+        return ", ".join(supported_formats)
+
+
+__all__ = ["SPARQLConnector", "SPARQLConnectorException"]

@@ -1,6 +1,6 @@
 """
 LongTurtle RDF graph serializer for RDFLib.
-See <http://www.w3.org/TeamSubmission/turtle/> for syntax specification.
+See http://www.w3.org/TeamSubmission/turtle/ for syntax specification.
 
 This variant, longturtle as opposed to just turtle, makes some small format changes
 to turtle - the original turtle serializer. It:
@@ -13,10 +13,17 @@ to turtle - the original turtle serializer. It:
     on the start of the next line
 * uses default encoding (encode()) is used instead of "latin-1"
 
-- Nicholas Car, 2021
+- Nicholas Car, 2023
 """
 
+from __future__ import annotations
+
+import warnings
+from typing import IO, Any, Optional
+
+from rdflib.compare import to_canonical_graph
 from rdflib.exceptions import Error
+from rdflib.graph import Graph, _TripleType
 from rdflib.namespace import RDF
 from rdflib.term import BNode, Literal, URIRef
 
@@ -33,16 +40,24 @@ _SPACIOUS_OUTPUT = False
 
 
 class LongTurtleSerializer(RecursiveSerializer):
+    """LongTurtle, a Turtle serialization format.
+
+    When the optional parameter `canon` is set to `True`, the graph is canonicalized
+    before serialization. This normalizes blank node identifiers and allows for
+    deterministic serialization of the graph. Useful when consistent outputs are required.
+    """
+
     short_name = "longturtle"
     indentString = "    "
 
     def __init__(self, store):
         self._ns_rewrite = {}
+        self._canon = False
         super(LongTurtleSerializer, self).__init__(store)
         self.keywords = {RDF.type: "a"}
         self.reset()
         self.stream = None
-        self._spacious = _SPACIOUS_OUTPUT
+        self._spacious: bool = _SPACIOUS_OUTPUT
 
     def addNamespace(self, prefix, namespace):
         # Turtle does not support prefixes that start with _
@@ -68,13 +83,44 @@ class LongTurtleSerializer(RecursiveSerializer):
         super(LongTurtleSerializer, self).addNamespace(prefix, namespace)
         return prefix
 
+    def canonize(self):
+        """Apply canonicalization to the store.
+
+        This normalizes blank node identifiers and allows for deterministic
+        serialization of the graph.
+        """
+        if not self._canon:
+            return
+
+        namespace_manager = self.store.namespace_manager
+        store = to_canonical_graph(self.store)
+        content = store.serialize(format="application/n-triples")
+        lines = content.split("\n")
+        lines.sort()
+        graph = Graph()
+        graph.parse(
+            data="\n".join(lines), format="application/n-triples", skolemize=True
+        )
+        graph = graph.de_skolemize()
+        graph.namespace_manager = namespace_manager
+        self.store = graph
+
     def reset(self):
         super(LongTurtleSerializer, self).reset()
         self._shortNames = {}
         self._started = False
         self._ns_rewrite = {}
+        self.canonize()
 
-    def serialize(self, stream, base=None, encoding=None, spacious=None, **args):
+    def serialize(
+        self,
+        stream: IO[bytes],
+        base: Optional[str] = None,
+        encoding: Optional[str] = None,
+        spacious: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> None:
+        self._canon = kwargs.get("canon", False)
         self.reset()
         self.stream = stream
         # if base is given here, use, if not and a base is set for the graph use that
@@ -101,30 +147,40 @@ class LongTurtleSerializer(RecursiveSerializer):
                 self.write("\n")
 
         self.endDocument()
-        self.write("\n")
 
         self.base = None
 
-    def preprocessTriple(self, triple):
+    def preprocessTriple(self, triple: _TripleType) -> None:
         super(LongTurtleSerializer, self).preprocessTriple(triple)
         for i, node in enumerate(triple):
-            if node in self.keywords:
-                continue
+            if i == VERB:
+                if node in self.keywords:
+                    # predicate is a keyword
+                    continue
+                if (
+                    self.base is not None
+                    and isinstance(node, URIRef)
+                    and node.startswith(self.base)
+                    and "#" not in node.replace(self.base, "")
+                    and "/" not in node.replace(self.base, "")
+                ):
+                    # predicate corresponds to base namespace
+                    continue
             # Don't use generated prefixes for subjects and objects
-            self.getQName(node, gen_prefix=(i == VERB))
+            self.get_pname(node, gen_prefix=(i == VERB))
             if isinstance(node, Literal) and node.datatype:
-                self.getQName(node.datatype, gen_prefix=_GEN_QNAME_FOR_DT)
+                self.get_pname(node.datatype, gen_prefix=_GEN_QNAME_FOR_DT)
         p = triple[1]
         if isinstance(p, BNode):  # hmm - when is P ever a bnode?
             self._references[p] += 1
 
-    def getQName(self, uri, gen_prefix=True):
+    def get_pname(self, uri, gen_prefix=True):
         if not isinstance(uri, URIRef):
             return None
 
         try:
             parts = self.store.compute_qname(uri, generate=gen_prefix)
-        except:
+        except Exception:
             # is the uri a namespace in itself?
             pfx = self.store.store.prefix(uri)
 
@@ -136,13 +192,29 @@ class LongTurtleSerializer(RecursiveSerializer):
 
         prefix, namespace, local = parts
 
-        # QName cannot end with .
+        # To understand treatment of % character refer to Productions for terminal PLX at
+        # https://www.w3.org/TR/turtle/#grammar-production-PLX
+        # Only % NOT followed by two hex chars requires manual backslash escaping
+        local = local.replace(r"(", r"\(").replace(r")", r"\)")
+        local = self.LOCALNAME_PECRENT_CHARACTER_REQUIRING_ESCAPE_REGEX.sub(
+            "\\%", local
+        )
+
+        # PName cannot end with .
         if local.endswith("."):
             return None
 
         prefix = self.addNamespace(prefix, namespace)
 
         return "%s:%s" % (prefix, local)
+
+    def getQName(self, uri, gen_prefix=True):
+        warnings.warn(
+            "LongTurtleSerializer.getQName is deprecated, use LongTurtleSerializer.get_pname instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.get_pname(uri, gen_prefix)
 
     def startDocument(self):
         self._started = True
@@ -168,21 +240,20 @@ class LongTurtleSerializer(RecursiveSerializer):
         self.path(subject, SUBJECT)
         self.write("\n" + self.indent())
         self.predicateList(subject)
-        self.write(" ;\n.")
+        self.write("\n.")
         return True
 
     def s_squared(self, subject):
         if (self._references[subject] > 0) or not isinstance(subject, BNode):
             return False
         self.write("\n" + self.indent() + "[]")
-        self.predicateList(subject)
-        self.write(" ;\n.")
+        self.predicateList(subject, newline=False)
+        self.write("\n.")
         return True
 
     def path(self, node, position, newline=False):
         if not (
-            self.p_squared(node, position, newline)
-            or self.p_default(node, position, newline)
+            self.p_squared(node, position) or self.p_default(node, position, newline)
         ):
             raise Error("Cannot serialize node '%s'" % (node,))
 
@@ -200,14 +271,18 @@ class LongTurtleSerializer(RecursiveSerializer):
         if isinstance(node, Literal):
             return node._literal_n3(
                 use_plain=True,
-                qname_callback=lambda dt: self.getQName(dt, _GEN_QNAME_FOR_DT),
+                qname_callback=lambda dt: self.get_pname(dt, _GEN_QNAME_FOR_DT),
             )
         else:
             node = self.relativize(node)
 
-            return self.getQName(node, position == VERB) or node.n3()
+            return self.get_pname(node, position == VERB) or node.n3()
 
-    def p_squared(self, node, position, newline=False):
+    def p_squared(
+        self,
+        node,
+        position,
+    ):
         if (
             not isinstance(node, BNode)
             or node in self._serialized
@@ -216,23 +291,19 @@ class LongTurtleSerializer(RecursiveSerializer):
         ):
             return False
 
-        if not newline:
-            self.write(" ")
-
         if self.isValidList(node):
             # this is a list
             self.depth += 2
-            self.write("(\n")
-            self.depth -= 1
+            self.write(" (\n")
+            self.depth -= 2
             self.doList(node)
-            self.depth -= 1
-            self.write("\n" + self.indent(1) + ")")
+            self.write("\n" + self.indent() + ")")
         else:
+            # this is a Blank Node
             self.subjectDone(node)
-            self.depth += 2
-            self.write("[\n")
-            self.depth -= 1
-            self.predicateList(node, newline=False)
+            self.write("\n" + self.indent(1) + "[\n")
+            self.depth += 1
+            self.predicateList(node)
             self.depth -= 1
             self.write("\n" + self.indent(1) + "]")
 
@@ -245,7 +316,7 @@ class LongTurtleSerializer(RecursiveSerializer):
         try:
             if self.store.value(l_, RDF.first) is None:
                 return False
-        except:
+        except Exception:
             return False
         while l_:
             if l_ != RDF.nil and len(list(self.store.predicate_objects(l_))) != 2:
@@ -279,6 +350,7 @@ class LongTurtleSerializer(RecursiveSerializer):
             self.write(" ;\n" + self.indent(1))
             self.verb(predicate, newline=True)
             self.objectList(properties[predicate])
+        self.write(" ;")
 
     def verb(self, node, newline=False):
         self.path(node, VERB, newline)
@@ -291,11 +363,15 @@ class LongTurtleSerializer(RecursiveSerializer):
         self.depth += depthmod
         first_nl = False
         if count > 1:
-            self.write("\n" + self.indent(1))
+            if not isinstance(objects[0], BNode):
+                self.write("\n" + self.indent(1))
+            else:
+                self.write(" ")
             first_nl = True
         self.path(objects[0], OBJECT, newline=first_nl)
         for obj in objects[1:]:
-            self.write(" ,\n")
-            self.write(self.indent(1))
+            self.write(" ,")
+            if not isinstance(obj, BNode):
+                self.write("\n" + self.indent(1))
             self.path(obj, OBJECT, newline=True)
         self.depth -= depthmod

@@ -2,7 +2,7 @@
 <!--
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -24,42 +24,43 @@
 ║                                                                                    ║
 ╚════════════════════════════════════════════════════════════════════════════════════╝
 -->
-<description
-  xmlns="http://openoffice.org/extensions/description/2006"
-  xmlns:d="http://openoffice.org/extensions/description/2006"
-  xmlns:xlink="http://www.w3.org/1999/xlink">
-    <version value="1.0.2"/>
-    <identifier value="io.github.prrvchr.gDriveOOo"/>
-    <platform value="all"/>
-    <dependencies>
-        <OpenOffice.org-minimal-version value="4.1" d:name="OpenOffice.org 4.1"/>
-    </dependencies>
-    <update-information>
-        <src xlink:href="https://prrvchr.github.io/gDriveOOo/gDriveOOo.update.xml"/>
-    </update-information>
-    <publisher>
-        <name xlink:href="https://prrvchr.github.io/gDriveOOo/" lang="en-US">Google Drive for LibreOffice</name>
-        <name xlink:href="https://prrvchr.github.io/gDriveOOo/README_fr" lang="fr-FR">Google Drive pour LibreOffice</name>
-    </publisher>
-    <registration>
-        <simple-license accept-by="admin" suppress-on-update="true">
-            <license-text xlink:href="registration/TermsOfUse_en.md" lang="en-US"/>
-            <license-text xlink:href="registration/TermsOfUse_fr.md" lang="fr-FR"/>
-        </simple-license>
-    </registration>
-    <release-notes>
-        <src xlink:href="https://prrvchr.github.io/gDriveOOo/" lang="en-US"/>
-        <src xlink:href="https://prrvchr.github.io/gDriveOOo/README_fr" lang="fr-FR"/>
-    </release-notes>
-    <display-name>
-        <name lang="en-US">gDriveOOo</name>
-    </display-name>
-    <icon>
-        <default xlink:href="gDriveOOo/gDriveOOo.svg"/>
-        <high-contrast xlink:href="gDriveOOo/gDriveOOo.svg"/>
-    </icon>
-    <extension-description>
-        <src xlink:href="description/desc_en.txt" lang="en-US"/>
-        <src xlink:href="description/desc_fr.txt" lang="fr-FR"/>
-    </extension-description>
+<description xmlns="http://openoffice.org/extensions/description/2006"
+             xmlns:d="http://openoffice.org/extensions/description/2006"
+             xmlns:l="http://libreoffice.org/extensions/description/2011"
+             xmlns:xlink="http://www.w3.org/1999/xlink">
+  <version value="1.4.0"/>
+  <identifier value="io.github.prrvchr.gDriveOOo"/>
+  <platform value="all"/>
+  <dependencies>
+    <d:OpenOffice.org-minimal-version value="6.0" d:name="LibreOffice 6.0"/>
+    <l:LibreOffice-minimal-version value="6.0" l:name="LibreOffice 6.0"/>
+  </dependencies>
+  <update-information>
+    <src xlink:href="https://github.com/prrvchr/gDriveOOo/releases/latest/download/gDriveOOo.update.xml"/>
+  </update-information>
+  <publisher>
+    <name xlink:href="https://prrvchr.github.io/gDriveOOo/" lang="en-US">Google Drive for LibreOffice</name>
+    <name xlink:href="https://prrvchr.github.io/gDriveOOo/README_fr" lang="fr-FR">Google Drive pour LibreOffice</name>
+  </publisher>
+  <registration>
+    <simple-license accept-by="admin" suppress-on-update="true">
+      <license-text xlink:href="registration/TermsOfUse_en.md" lang="en-US"/>
+      <license-text xlink:href="registration/TermsOfUse_fr.md" lang="fr-FR"/>
+    </simple-license>
+  </registration>
+  <release-notes>
+    <src xlink:href="https://prrvchr.github.io/gDriveOOo/" lang="en-US"/>
+    <src xlink:href="https://prrvchr.github.io/gDriveOOo/README_fr" lang="fr-FR"/>
+  </release-notes>
+  <display-name>
+    <name lang="en-US">gDriveOOo</name>
+  </display-name>
+  <icon>
+    <default xlink:href="img/gDriveOOo.svg"/>
+    <high-contrast xlink:href="img/gDriveOOo.svg"/>
+  </icon>
+  <extension-description>
+    <src xlink:href="description/description_en.txt" lang="en-US"/>
+    <src xlink:href="description/description_fr.txt" lang="fr-FR"/>
+  </extension-description>
 </description>

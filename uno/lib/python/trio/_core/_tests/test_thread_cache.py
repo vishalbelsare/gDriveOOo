@@ -1,21 +1,33 @@
-import pytest
+from __future__ import annotations
+
+import os
+import sys
 import threading
-from queue import Queue
 import time
+import warnings
 from contextlib import contextmanager
+from queue import Queue
+from typing import TYPE_CHECKING, NoReturn
 
-from .tutil import slow, gc_collect_harder
+import pytest
+
 from .. import _thread_cache
-from .._thread_cache import start_thread_soon, ThreadCache
+from .._thread_cache import ThreadCache, start_thread_soon
+from .tutil import gc_collect_harder, slow
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from outcome import Outcome
 
 
-def test_thread_cache_basics():
-    q = Queue()
+def test_thread_cache_basics() -> None:
+    q: Queue[Outcome[object]] = Queue()
 
-    def fn():
+    def fn() -> NoReturn:
         raise RuntimeError("hi")
 
-    def deliver(outcome):
+    def deliver(outcome: Outcome[object]) -> None:
         q.put(outcome)
 
     start_thread_soon(fn, deliver)
@@ -25,19 +37,19 @@ def test_thread_cache_basics():
         outcome.unwrap()
 
 
-def test_thread_cache_deref():
+def test_thread_cache_deref() -> None:
     res = [False]
 
     class del_me:
-        def __call__(self):
+        def __call__(self) -> int:
             return 42
 
-        def __del__(self):
+        def __del__(self) -> None:
             res[0] = True
 
-    q = Queue()
+    q: Queue[Outcome[int]] = Queue()
 
-    def deliver(outcome):
+    def deliver(outcome: Outcome[int]) -> None:
         q.put(outcome)
 
     start_thread_soon(del_me(), deliver)
@@ -49,7 +61,7 @@ def test_thread_cache_deref():
 
 
 @slow
-def test_spawning_new_thread_from_deliver_reuses_starting_thread():
+def test_spawning_new_thread_from_deliver_reuses_starting_thread() -> None:
     # We know that no-one else is using the thread cache, so if we keep
     # submitting new jobs the instant the previous one is finished, we should
     # keep getting the same thread over and over. This tests both that the
@@ -58,7 +70,7 @@ def test_spawning_new_thread_from_deliver_reuses_starting_thread():
 
     # Make sure there are a few threads running, so if we weren't LIFO then we
     # could grab the wrong one.
-    q = Queue()
+    q: Queue[Outcome[object]] = Queue()
     COUNT = 5
     for _ in range(COUNT):
         start_thread_soon(lambda: time.sleep(1), lambda result: q.put(result))
@@ -68,7 +80,7 @@ def test_spawning_new_thread_from_deliver_reuses_starting_thread():
     seen_threads = set()
     done = threading.Event()
 
-    def deliver(n, _):
+    def deliver(n: int, _: object) -> None:
         print(n)
         seen_threads.add(threading.current_thread())
         if n == 0:
@@ -84,13 +96,13 @@ def test_spawning_new_thread_from_deliver_reuses_starting_thread():
 
 
 @slow
-def test_idle_threads_exit(monkeypatch):
+def test_idle_threads_exit(monkeypatch: pytest.MonkeyPatch) -> None:
     # Temporarily set the idle timeout to something tiny, to speed up the
     # test. (But non-zero, so that the worker loop will at least yield the
     # CPU.)
     monkeypatch.setattr(_thread_cache, "IDLE_TIMEOUT", 0.0001)
 
-    q = Queue()
+    q: Queue[threading.Thread] = Queue()
     start_thread_soon(lambda: None, lambda _: q.put(threading.current_thread()))
     seen_thread = q.get()
     # Since the idle timeout is 0, after sleeping for 1 second, the thread
@@ -100,7 +112,7 @@ def test_idle_threads_exit(monkeypatch):
 
 
 @contextmanager
-def _join_started_threads():
+def _join_started_threads() -> Iterator[None]:
     before = frozenset(threading.enumerate())
     try:
         yield
@@ -111,7 +123,9 @@ def _join_started_threads():
                 assert not thread.is_alive()
 
 
-def test_race_between_idle_exit_and_job_assignment(monkeypatch):
+def test_race_between_idle_exit_and_job_assignment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # This is a lock where the first few times you try to acquire it with a
     # timeout, it waits until the lock is available and then pretends to time
     # out. Using this in our thread cache implementation causes the following
@@ -130,11 +144,11 @@ def test_race_between_idle_exit_and_job_assignment(monkeypatch):
     #    everything proceeds as normal.
 
     class JankyLock:
-        def __init__(self):
+        def __init__(self) -> None:
             self._lock = threading.Lock()
             self._counter = 3
 
-        def acquire(self, timeout=-1):
+        def acquire(self, timeout: int = -1) -> bool:
             got_it = self._lock.acquire(timeout=timeout)
             if timeout == -1:
                 return True
@@ -147,7 +161,7 @@ def test_race_between_idle_exit_and_job_assignment(monkeypatch):
             else:
                 return False
 
-        def release(self):
+        def release(self) -> None:
             self._lock.release()
 
     monkeypatch.setattr(_thread_cache, "Lock", JankyLock)
@@ -164,13 +178,13 @@ def test_race_between_idle_exit_and_job_assignment(monkeypatch):
         tc.start_thread_soon(lambda: None, lambda _: None)
 
 
-def test_raise_in_deliver(capfd):
+def test_raise_in_deliver(capfd: pytest.CaptureFixture[str]) -> None:
     seen_threads = set()
 
-    def track_threads():
+    def track_threads() -> None:
         seen_threads.add(threading.current_thread())
 
-    def deliver(_):
+    def deliver(_: object) -> NoReturn:
         done.set()
         raise RuntimeError("don't do this")
 
@@ -184,3 +198,44 @@ def test_raise_in_deliver(capfd):
     err = capfd.readouterr().err
     assert "don't do this" in err
     assert "delivering result" in err
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="os.fork isn't supported")
+def test_clear_thread_cache_after_fork() -> None:
+    assert hasattr(os, "fork")
+
+    def foo() -> None:
+        pass
+
+    # ensure the thread cache exists
+    done = threading.Event()
+    start_thread_soon(foo, lambda _: done.set())
+    done.wait()
+
+    with warnings.catch_warnings(record=True) as emitted:
+        # unfortunately, we can't use pytest.warns() because the child
+        # does not warn.
+        warnings.simplefilter("default")
+        child_pid = os.fork()
+
+    if child_pid != 0 and sys.version_info >= (3, 12):
+        # the warning is only emitted in the parent
+        assert len(emitted) == 1
+        assert isinstance(emitted[0].message, DeprecationWarning)
+        assert "fork() may lead to" in str(emitted[0].message)
+    else:
+        assert not emitted
+
+    # try using it
+    done = threading.Event()
+    start_thread_soon(foo, lambda _: done.set())
+    done.wait()
+
+    if child_pid != 0:
+        # if this test fails, this will hang, triggering a timeout.
+        os.waitpid(child_pid, 0)
+    else:  # pragma: no cover  # coverage is shut down by os._exit(0)
+        # we would *want* to allow coverage to take a snapshot here. check
+        # git blame for how to do that. however, that times out for some
+        # reason when having `tests/` in `source` for coverage.py.
+        os._exit(0)

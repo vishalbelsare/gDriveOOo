@@ -2,8 +2,8 @@
 Code for tying SPARQL Engine into RDFLib
 
 These should be automatically registered with RDFLib
-
 """
+
 from __future__ import annotations
 
 from typing import Any, Mapping, Optional, Union
@@ -19,22 +19,30 @@ from rdflib.term import Identifier
 
 
 def prepareQuery(
-    queryString: str, initNs: Mapping[str, Any] = {}, base: Optional[str] = None
+    queryString: str,
+    initNs: Optional[Mapping[str, Any]] = None,
+    base: Optional[str] = None,
 ) -> Query:
     """
     Parse and translate a SPARQL Query
     """
+    if initNs is None:
+        initNs = {}
     ret = translateQuery(parseQuery(queryString), base, initNs)
     ret._original_args = (queryString, initNs, base)
     return ret
 
 
 def prepareUpdate(
-    updateString: str, initNs: Mapping[str, Any] = {}, base: Optional[str] = None
+    updateString: str,
+    initNs: Optional[Mapping[str, Any]] = None,
+    base: Optional[str] = None,
 ) -> Update:
     """
     Parse and translate a SPARQL Update
     """
+    if initNs is None:
+        initNs = {}
     ret = translateUpdate(parseUpdate(updateString), base, initNs)
     ret._original_args = (updateString, initNs, base)
     return ret
@@ -43,8 +51,8 @@ def prepareUpdate(
 def processUpdate(
     graph: Graph,
     updateString: str,
-    initBindings: Mapping[str, Identifier] = {},
-    initNs: Mapping[str, Any] = {},
+    initBindings: Optional[Mapping[str, Identifier]] = None,
+    initNs: Optional[Mapping[str, Any]] = None,
     base: Optional[str] = None,
 ) -> None:
     """
@@ -73,22 +81,22 @@ class SPARQLUpdateProcessor(UpdateProcessor):
     def update(
         self,
         strOrQuery: Union[str, Update],
-        initBindings: Mapping[str, Identifier] = {},
-        initNs: Mapping[str, Any] = {},
+        initBindings: Optional[Mapping[str, Identifier]] = None,
+        initNs: Optional[Mapping[str, Any]] = None,
     ) -> None:
         """
-        .. caution::
+        !!! warning "Caution"
 
-           This method can access indirectly requested network endpoints, for
-           example, query processing will attempt to access network endpoints
-           specified in ``SERVICE`` directives.
+            This method can access indirectly requested network endpoints, for
+            example, query processing will attempt to access network endpoints
+            specified in `SERVICE` directives.
 
-           When processing untrusted or potentially malicious queries, measures
-           should be taken to restrict network and file access.
+            When processing untrusted or potentially malicious queries, measures
+            should be taken to restrict network and file access.
 
-           For information on available security measures, see the RDFLib
-           :doc:`Security Considerations </security_considerations>`
-           documentation.
+            For information on available security measures, see the RDFLib
+            [Security Considerations](../security_considerations.md)
+            documentation.
         """
 
         if isinstance(strOrQuery, str):
@@ -108,8 +116,8 @@ class SPARQLProcessor(Processor):
     def query(  # type: ignore[override]
         self,
         strOrQuery: Union[str, Query],
-        initBindings: Mapping[str, Identifier] = {},
-        initNs: Mapping[str, Any] = {},
+        initBindings: Optional[Mapping[str, Identifier]] = None,
+        initNs: Optional[Mapping[str, Any]] = None,
         base: Optional[str] = None,
         DEBUG: bool = False,
     ) -> Mapping[str, Any]:
@@ -118,23 +126,21 @@ class SPARQLProcessor(Processor):
         namespaces. The given base is used to resolve relative URIs in
         the query and will be overridden by any BASE given in the query.
 
-        .. caution::
+        !!! warning "Caution"
 
-           This method can access indirectly requested network endpoints, for
-           example, query processing will attempt to access network endpoints
-           specified in ``SERVICE`` directives.
+            This method can access indirectly requested network endpoints, for
+            example, query processing will attempt to access network endpoints
+            specified in `SERVICE` directives.
 
-           When processing untrusted or potentially malicious queries, measures
-           should be taken to restrict network and file access.
+            When processing untrusted or potentially malicious queries, measures
+            should be taken to restrict network and file access.
 
-           For information on available security measures, see the RDFLib
-           :doc:`Security Considerations </security_considerations>`
-           documentation.
+            For information on available security measures, see the RDFLib
+            [Security Considerations](../security_considerations.md)
+            documentation.
         """
 
-        if not isinstance(strOrQuery, Query):
-            parsetree = parseQuery(strOrQuery)
-            query = translateQuery(parsetree, base, initNs)
-        else:
-            query = strOrQuery
-        return evalQuery(self.graph, query, initBindings, base)
+        if isinstance(strOrQuery, str):
+            strOrQuery = translateQuery(parseQuery(strOrQuery), base, initNs)
+
+        return evalQuery(self.graph, strOrQuery, initBindings, base)

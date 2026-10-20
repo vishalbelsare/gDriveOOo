@@ -4,7 +4,7 @@
 """
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -27,44 +27,60 @@
 ╚════════════════════════════════════════════════════════════════════════════════════╝
 """
 
-import uno
-import unohelper
+from com.sun.star.logging.LogLevel import INFO
+from com.sun.star.logging.LogLevel import SEVERE
 
 from com.sun.star.ucb.ConnectionMode import OFFLINE
 from com.sun.star.ucb.ConnectionMode import ONLINE
 
-from .book import Books
+from .book import Book
 
-from ..cardtool import getSqlException
-
-from ..dbconfig import g_user
-from ..dbconfig import g_schema
-from ..dbconfig import g_dotcode
+from ..helper import getSqlException
+from ..helper import getUserId
+from ..helper import getUserSchema
 
 from ..unotool import getConnectionMode
 
-from ..oauth2 import getRequest
-from ..oauth2 import g_service
+from ..configuration import g_extension
 
 import traceback
 
-
-class User(unohelper.Base):
-    def __init__(self, ctx, database, provider, scheme, server, name, pwd=''):
+class User(object):
+    def __init__(self, ctx, source, logger, database, provider, url, scheme, server, name, pwd=''):
+        self._cls = 'User'
+        mtd = '__init__'
+        logger.logprb(INFO, self._cls, mtd, 1501, name)
         self._ctx = ctx
         self._password = pwd
-        self.Request = getRequest(ctx, server, name)
         self._sessions = []
-        self._metadata, books = database.selectUser(server, name)
-        new = self._metadata is None
-        if new:
-            self._metadata, books = self._getNewUser(database, provider, scheme, server, name, pwd)
-            database.createUser(self.getSchema(), self.Id, name, '')
-        self._books = Books(ctx, books, new)
+        logger.logprb(INFO, self._cls, mtd, 1502, name)
+        metadata, args = database.selectUser(server, name)
+        new = metadata is None
+        if not new:
+            logger.logprb(INFO, self._cls, mtd, 1503, name)
+            request = provider.getRequest(url, name)
+            if request is None:
+                raise getSqlException(ctx, source, 1002, 1506, self._cls, mtd, name, g_extension)
+        else:
+            logger.logprb(INFO, self._cls, mtd, 1504, name)
+            if self._isOffLine(server):
+                raise getSqlException(ctx, source, 1004, 1507, self._cls, mtd, server)
+            request = provider.getRequest(url, name)
+            if request is None:
+                raise getSqlException(ctx, source, 1002, 1506, self._cls, mtd, name, g_extension)
+            metadata, args = provider.insertUser(database, request, scheme, server, name, pwd)
+            if metadata is None:
+                raise getSqlException(ctx, source, 1005, 1508, self._cls, mtd, name)
+            database.createUser(getUserSchema(metadata), getUserId(metadata), name, '')
+        self._request = request
+        self._metadata = metadata
+        books = (Book(new, **kwargs) for kwargs in args)
+        self._books = {book.Uri: book for book in books}
+        logger.logprb(INFO, self._cls, mtd, 1505, name)
 
     @property
     def Id(self):
-        return self._metadata.get('User')
+        return getUserId(self._metadata)
     @property
     def Uri(self):
         return self._metadata.get('Uri')
@@ -84,14 +100,15 @@ class User(unohelper.Base):
     def Password(self):
         return self._password
     @property
-    def Books(self):
-        return self._books
-    @property
     def BaseUrl(self):
         return self.Scheme + self.Server + self.Path
+    @property
+    def Request(self):
+        return self._request
 
     def isOnLine(self):
-        return getConnectionMode(self._ctx, self.Server) != OFFLINE
+        return self._isOnLine(self.Server)
+
     def isOffLine(self):
         return self._isOffLine(self.Server)
 
@@ -104,9 +121,21 @@ class User(unohelper.Base):
         return password
 
     def getSchema(self):
-        # FIXME: We need to replace the dot for schema name
-        # FIXME: g_dotcode is used in database procedure too...
-        return self.Name.replace('.', chr(g_dotcode))
+        return getUserSchema(self._metadata)
+
+    def hasBook(self, uri):
+        return uri in self._books
+
+    def getBooks(self):
+        return self._books.values()
+
+    def getBook(self, uri):
+        return self._books[uri]
+
+    def setNewBook(self, uri, **kwargs):
+        book = Book(True, **kwargs)
+        self._books[uri] = book
+        return book
 
     def hasSession(self):
         return len(self._sessions) > 0
@@ -121,19 +150,9 @@ class User(unohelper.Base):
     def unquoteUrl(self, url):
         return self.Request.unquoteUrl(url)
 
-    def getBooks(self):
-        return self._books.getBooks()
-
-    def _getNewUser(self, database, provider, scheme, server, name, pwd):
-        if self._isOffLine(server):
-            raise getSqlException(self._ctx, self, 1004, 1108, '_getNewUser', name)
-        if self.Request is None:
-            raise getSqlException(self._ctx, self, 1003, 1105, '_getNewUser', g_service)
-        data = provider.insertUser(database, self.Request, scheme, server, name, pwd)
-        if data is None:
-            raise getSqlException(self._ctx, self, 1006, 1107, '_getNewUser', name)
-        return data
-
     def _isOffLine(self, server):
         return getConnectionMode(self._ctx, server) != ONLINE
+
+    def _isOnLine(self, server):
+        return getConnectionMode(self._ctx, server) != OFFLINE
 

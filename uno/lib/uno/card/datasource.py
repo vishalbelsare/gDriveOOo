@@ -4,7 +4,7 @@
 """
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -27,38 +27,59 @@
 ╚════════════════════════════════════════════════════════════════════════════════════╝
 """
 
-import uno
-import unohelper
+from com.sun.star.logging.LogLevel import INFO
+from com.sun.star.logging.LogLevel import SEVERE
+
+from com.sun.star.uno import Exception as UnoException
+
+from .database import DataBase
 
 from .provider import Provider
 
-from .replicator import Replicator
-
 from .card import User
 
-from .listener import EventListener
-from .listener import TerminateListener
+from .card import Replicator
+
+from .card import EventListener
+from .card import TerminateListener
 
 from .unotool import getDesktop
 
-import traceback
+from .helper import getSqlException
 
+from .configuration import g_extension
 
-class DataSource(unohelper.Base):
-    def __init__(self, ctx, database):
+from threading import Event
+
+class DataSource():
+    def __init__(self, ctx, source, logger, url):
+        self._cls = 'DataSource'
+        mtd = '__init__'
+        logger.logprb(INFO, self._cls, mtd, 1201)
         self._ctx = ctx
         self._maps = {}
-        self._users = {}
+        database = DataBase(ctx, logger, url)
+        provider = Provider(ctx, source, database)
+        users = {}
+        sync = Event()
+        self._sync = sync
+        self._users = users
         self._database = database
+        self._provider = provider
+        self._replicator = Replicator(ctx, database, provider, users, sync)
         self._listener = EventListener(self)
-        self._provider = Provider(ctx, database)
-        self._replicator = Replicator(ctx, database, self._provider, self._users)
-        listener = TerminateListener(self._replicator)
-        getDesktop(ctx).addTerminateListener(listener)
+        getDesktop(ctx).addTerminateListener(TerminateListener(self._replicator))
+        logger.logprb(INFO, self._cls, mtd, 1202)
 
     @property
     def DataBase(self):
         return self._database
+
+    def isUptoDate(self):
+        return self._database.isUptoDate()
+
+    def getDataBaseVersion(self):
+        return self._database.Version
 
 # Procedures called by EventListener
     def closeConnection(self, connection):
@@ -66,34 +87,36 @@ class DataSource(unohelper.Base):
         if name in self._users:
             user = self._users.get(name)
             user.removeSession(self._database.getSessionId(connection))
-            print("DataSource.closeConnection() 1: %s - %s" % (len(self._users), name))
-        if not self._hasSession():
-            self._replicator.stop()
-        print("DataSource.closeConnection() 2")
 
 # Procedures called by Driver
-    def getConnection(self, scheme, server, account, password):
+    def getConnection(self, source, logger, url, scheme, server, account, password=''):
+        mtd = 'getConnection'
         uri = self._provider.getUserUri(server, account)
         if uri in self._maps:
             name = self._maps.get(uri)
             user = self._users.get(name)
+            if not user.Request.isAuthorized():
+                raise getSqlException(self._ctx, source, 1002, 1401, self._cls, mtd, name, g_extension)
         else:
-            user = User(self._ctx, self._database, self._provider, scheme, server, account, password)
+            user = User(self._ctx, source, logger, self._database,
+                        self._provider, url, scheme, server, account, password)
             name = user.getName()
+        if user.isOnLine():
+            try:
+                self._provider.initAddressbooks(self._database, user)
+            except UnoException as ex:
+                e = getSqlException(self._ctx, source, 1001, 1402, self._cls, mtd, name, g_extension)
+                e.NextException = ex
+                raise e
+        connection = self._database.getConnection(name, user.getPassword())
+        # XXX: New users are cached only if the connection is successful.
+        if not uri in self._maps:
             self._users[name] = user
             self._maps[uri] = name
-        if user.isOnLine():
-            self._provider.initAddressbooks(self._database, user)
-        connection = self._database.getConnection(name, user.getPassword())
         user.addSession(self._database.getSessionId(connection))
         # User and/or AddressBooks has been initialized and the connection to the database is done...
         # We can start the database replication in a background task.
-        self._replicator.start()
+        self._sync.set()
         connection.addEventListener(self._listener)
         return connection
 
-    def _hasSession(self):
-        for user in self._users.values():
-            if user.hasSession():
-                return True
-        return False

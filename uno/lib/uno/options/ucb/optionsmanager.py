@@ -4,7 +4,7 @@
 """
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -27,78 +27,79 @@
 ╚════════════════════════════════════════════════════════════════════════════════════╝
 """
 
-import unohelper
-
 from .optionsmodel import OptionsModel
+
 from .optionsview import OptionsView
 
-from ..unotool import executeDispatch
-from ..unotool import getDesktop
+from .optionshandler import OptionsListener
 
-from ..logger import LogManager
+from .option import OptionManager
 
+from ..runner import DispatchListener
+
+from ..setup import SetupCheck
+
+from ..helper import getExtensions
+
+from ..setup import showSetup
+
+from ..jdbcdriver import g_agent
+from ..jdbcdriver import g_java
+from ..jdbcdriver import g_protocol
+from ..jdbcdriver import g_script
+from ..jdbcdriver import g_service
+
+from ..configuration import State
+from ..configuration import g_extension
 from ..configuration import g_identifier
-from ..configuration import g_defaultlog
 
-from collections import OrderedDict
-import os
-import sys
 import traceback
 
 
-class OptionsManager(unohelper.Base):
-    def __init__(self, ctx, window):
+class OptionsManager():
+    def __init__(self, ctx, source, logger, window):
         self._ctx = ctx
+        self._disposed = False
+        self._java = g_extension, g_java, g_script
+        self._agent = g_service, g_protocol, g_agent
         self._model = OptionsModel(ctx)
-        exist = self._model.hasData()
-        resumable = self._model.isResumable()
-        data = self._model.getViewData()
-        self._view = OptionsView(window, exist, resumable, data)
-        self._logger = LogManager(ctx, window.Peer, self._getInfos(), g_identifier, g_defaultlog)
+        self._view = OptionsView(window, *self._model.getViewData())
+        self._manager = OptionManager(ctx, source, logger, window, self._model.getConfig())
+        window.addEventListener(OptionsListener(self))
+        self._loadView(self.init)
 
-    def saveSetting(self):
-        share, name, index, timeout, download, upload = self._view.getViewData()
-        self._model.setViewData(share, name, index, timeout, download, upload)
-        self._logger.saveSetting()
+    def init(self, state):
+        if not self._disposed:
+            self._manager.init(state)
+            self._view.initView(*self._model.getInitData(state))
+
+    def refresh(self, state):
+        if not self._disposed:
+            self._manager.refresh(state)
+            self._view.refreshView(self._model.getRefreshData(state))
 
     def loadSetting(self):
-        data = self._model.getViewData()
-        self._view.setViewData(*data)
-        self._logger.loadSetting()
+        self._loadView(self.init)
 
-    def enableShare(self, enabled):
-        self._view.enableShare(enabled)
+    def saveSetting(self):
+        if self._manager.saveSetting():
+            State.restart = True
+            self._loadView(self.refresh)
 
-    def enableTimeout(self, enabled):
-        self._view.enableTimeout(enabled)
+    def dispose(self):
+        self._disposed = True
 
-    def viewData(self):
-        url = self._model.getDatasourceUrl()
-        getDesktop(self._ctx).loadComponentFromURL(url, '_blank', 0, ())
+    def showSetup(self):
+        mode = self._view.getSetup()
+        showSetup(self._ctx, g_identifier, Dispatch=DispatchListener(self), Mode=mode)
 
-    def download(self):
-        self._view.setStep(1)
+    def dispatchFinished(self, notification):
+        if not self._disposed:
+            self._loadView(self.refresh)
 
-    def upload(self):
-        self._view.setStep(2)
-
-    def _getInfos(self):
-        infos = OrderedDict()
-        version  = ' '.join(sys.version.split())
-        infos[111] = version
-        path = os.pathsep.join(sys.path)
-        infos[112] = path
-        # Required modules for ijson
-        try:
-            import ijson
-        except Exception as e:
-            infos[136] = self._getExceptionMsg(e)
-        else:
-            infos[137] = ijson.__version__, ijson.__file__
-        return infos
-
-    def _getExceptionMsg(self, e):
-        error = repr(e)
-        trace = repr(traceback.format_exc())
-        return error, trace
+    def _loadView(self, callback):
+        mode = self._view.getSetup()
+        datasource = self._manager.getDataSourceUrl()
+        setup = SetupCheck(self._ctx, callback, datasource, java=self._java, agent=self._agent, python=True, extensions=getExtensions(), mode=mode)
+        setup.start()
 

@@ -34,72 +34,66 @@ __all__ = [
     "EncodeOnlyUnicode",
 ]
 
+import rdflib.term
+
 if TYPE_CHECKING:
     from rdflib.graph import Graph, _TripleType
     from rdflib.plugins.sparql.sparql import Query, Update
     from rdflib.term import Identifier, Variable
 
 
-class Processor(object):
+class Processor:
     """
     Query plugin interface.
 
     This module is useful for those wanting to write a query processor
     that can plugin to rdf. If you are wanting to execute a query you
     likely want to do so through the Graph class query method.
-
     """
 
-    def __init__(self, graph: "Graph"):
+    def __init__(self, graph: Graph):
         pass
 
     # type error: Missing return statement
     def query(  # type: ignore[empty-body]
         self,
-        strOrQuery: Union[str, "Query"],  # noqa: N803
-        initBindings: Mapping["str", "Identifier"] = {},  # noqa: N803
+        strOrQuery: Union[str, Query],  # noqa: N803
+        initBindings: Mapping[str, Identifier] = {},  # noqa: N803
         initNs: Mapping[str, Any] = {},  # noqa: N803
-        DEBUG: bool = False,
+        DEBUG: bool = False,  # noqa: N803
     ) -> Mapping[str, Any]:
         pass
 
 
-class UpdateProcessor(object):
-    """
-    Update plugin interface.
+class UpdateProcessor:
+    """Update plugin interface.
 
     This module is useful for those wanting to write an update
     processor that can plugin to rdflib. If you are wanting to execute
     an update statement you likely want to do so through the Graph
     class update method.
 
-    .. versionadded:: 4.0
-
+    !!! example "New in version 4.0"
     """
 
-    def __init__(self, graph: "Graph"):
+    def __init__(self, graph: Graph):
         pass
 
     def update(
         self,
-        strOrQuery: Union[str, "Update"],  # noqa: N803
-        initBindings: Mapping["str", "Identifier"] = {},  # noqa: N803
-        initNs: Mapping[str, Any] = {},
+        strOrQuery: Union[str, Update],  # noqa: N803
+        initBindings: Mapping[str, Identifier] = {},  # noqa: N803
+        initNs: Mapping[str, Any] = {},  # noqa: N803
     ) -> None:
         pass
 
 
-class ResultException(Exception):
+class ResultException(Exception):  # noqa: N818
     pass
 
 
-class EncodeOnlyUnicode(object):
-    """
-    This is a crappy work-around for
-    http://bugs.python.org/issue11649
-
-
-    """
+class EncodeOnlyUnicode:
+    """This is a crappy work-around for http://bugs.python.org/issue11649"""
 
     def __init__(self, stream: BinaryIO):
         self.__stream = stream
@@ -114,61 +108,59 @@ class EncodeOnlyUnicode(object):
         return getattr(self.__stream, name)
 
 
-class ResultRow(Tuple["Identifier", ...]):
-    """
-    a single result row
-    allows accessing bindings as attributes or with []
+class ResultRow(Tuple[rdflib.term.Identifier, ...]):
+    """A single result row allows accessing bindings as attributes or with []
 
+    ```python
     >>> from rdflib import URIRef, Variable
     >>> rr=ResultRow({ Variable('a'): URIRef('urn:cake') }, [Variable('a')])
 
     >>> rr[0]
-    rdflib.term.URIRef(u'urn:cake')
+    rdflib.term.URIRef('urn:cake')
     >>> rr[1]
     Traceback (most recent call last):
         ...
     IndexError: tuple index out of range
 
     >>> rr.a
-    rdflib.term.URIRef(u'urn:cake')
+    rdflib.term.URIRef('urn:cake')
     >>> rr.b
     Traceback (most recent call last):
         ...
     AttributeError: b
 
     >>> rr['a']
-    rdflib.term.URIRef(u'urn:cake')
+    rdflib.term.URIRef('urn:cake')
     >>> rr['b']
     Traceback (most recent call last):
         ...
     KeyError: 'b'
 
     >>> rr[Variable('a')]
-    rdflib.term.URIRef(u'urn:cake')
+    rdflib.term.URIRef('urn:cake')
 
-    .. versionadded:: 4.0
+    ```
 
+    !!! example "New in version 4.0"
     """
 
     labels: Mapping[str, int]
 
-    def __new__(
-        cls, values: Mapping["Variable", "Identifier"], labels: List["Variable"]
-    ):
+    def __new__(cls, values: Mapping[Variable, Identifier], labels: List[Variable]):
         # type error: Value of type variable "Self" of "__new__" of "tuple" cannot be "ResultRow"  [type-var]
         # type error: Generator has incompatible item type "Optional[Identifier]"; expected "_T_co"  [misc]
-        instance = super(ResultRow, cls).__new__(cls, (values.get(v) for v in labels))  # type: ignore[type-var, misc]
+        instance = super(ResultRow, cls).__new__(cls, (values.get(v) for v in labels))  # type: ignore[type-var, misc, unused-ignore]
         instance.labels = dict((str(x[1]), x[0]) for x in enumerate(labels))
         return instance
 
-    def __getattr__(self, name: str) -> "Identifier":
+    def __getattr__(self, name: str) -> Identifier:
         if name not in self.labels:
             raise AttributeError(name)
         return tuple.__getitem__(self, self.labels[name])
 
     # type error: Signature of "__getitem__" incompatible with supertype "tuple"
     # type error: Signature of "__getitem__" incompatible with supertype "Sequence"
-    def __getitem__(self, name: Union[str, int, Any]) -> "Identifier":  # type: ignore[override]
+    def __getitem__(self, name: Union[str, int, Any]) -> Identifier:  # type: ignore[override]
         try:
             # type error: Invalid index type "Union[str, int, Any]" for "tuple"; expected type "int"
             return tuple.__getitem__(self, name)  # type: ignore[index]
@@ -181,28 +173,26 @@ class ResultRow(Tuple["Identifier", ...]):
             raise KeyError(name)
 
     @overload
-    def get(self, name: str, default: "Identifier") -> "Identifier":
-        ...
+    def get(self, name: str, default: Identifier) -> Identifier: ...
 
     @overload
     def get(
-        self, name: str, default: Optional["Identifier"] = ...
-    ) -> Optional["Identifier"]:
-        ...
+        self, name: str, default: Optional[Identifier] = ...
+    ) -> Optional[Identifier]: ...
 
     def get(
-        self, name: str, default: Optional["Identifier"] = None
-    ) -> Optional["Identifier"]:
+        self, name: str, default: Optional[Identifier] = None
+    ) -> Optional[Identifier]:
         try:
             return self[name]
         except KeyError:
             return default
 
-    def asdict(self) -> Dict[str, "Identifier"]:
+    def asdict(self) -> Dict[str, Identifier]:
         return dict((v, self[v]) for v in self.labels if self[v] is not None)
 
 
-class Result(object):
+class Result:
     """
     A common class for representing query result.
 
@@ -217,8 +207,7 @@ class Result(object):
     If the type is "CONSTRUCT" or "DESCRIBE" iterating will yield the
     triples.
 
-    len(result) also works.
-
+    `len(result)` also works.
     """
 
     def __init__(self, type_: str):
@@ -227,11 +216,12 @@ class Result(object):
 
         self.type = type_
         #: variables contained in the result.
-        self.vars: Optional[List["Variable"]] = None
-        self._bindings: MutableSequence[Mapping["Variable", "Identifier"]] = None  # type: ignore[assignment]
-        self._genbindings: Optional[Iterator[Mapping["Variable", "Identifier"]]] = None
+        self.vars: Optional[List[Variable]] = None
+        """a list of variables contained in the result"""
+        self._bindings: MutableSequence[Mapping[Variable, Identifier]] = None  # type: ignore[assignment]
+        self._genbindings: Optional[Iterator[Mapping[Variable, Identifier]]] = None
         self.askAnswer: Optional[bool] = None
-        self.graph: Optional["Graph"] = None
+        self.graph: Optional[Graph] = None
 
     @property
     def bindings(self) -> MutableSequence[Mapping[Variable, Identifier]]:
@@ -248,7 +238,7 @@ class Result(object):
     def bindings(
         self,
         b: Union[
-            MutableSequence[Mapping["Variable", "Identifier"]],
+            MutableSequence[Mapping[Variable, Identifier]],
             Iterator[Mapping[Variable, Identifier]],
         ],
     ) -> None:
@@ -265,7 +255,8 @@ class Result(object):
         format: Optional[str] = None,
         content_type: Optional[str] = None,
         **kwargs: Any,
-    ) -> "Result":
+    ) -> Result:
+        """Parse a query result from a source."""
         from rdflib import plugin
 
         if format:
@@ -292,18 +283,25 @@ class Result(object):
         """
         Serialize the query result.
 
-        The :code:`format` argument determines the Serializer class to use.
 
-        - csv: :class:`~rdflib.plugins.sparql.results.csvresults.CSVResultSerializer`
-        - json: :class:`~rdflib.plugins.sparql.results.jsonresults.JSONResultSerializer`
-        - txt: :class:`~rdflib.plugins.sparql.results.txtresults.TXTResultSerializer`
-        - xml: :class:`~rdflib.plugins.sparql.results.xmlresults.XMLResultSerializer`
+        Args:
+            destination: Path of file output or BufferedIOBase object
+                to write the output to. If `None` this function
+                will return the output as  `bytes`
+            encoding: Encoding of output.
+            format: The format used for serialization.
+                See [sparql.results module][rdflib.plugins.sparql.results]
+                for all builtin SPARQL result serialization.
+                Further serializer can be loaded [as plugin][rdflib.plugin].
+                Some example formats are
+                [csv][rdflib.plugins.sparql.results.csvresults.CSVResultSerializer],
+                [json][rdflib.plugins.sparql.results.jsonresults.JSONResultSerializer],
+                [txt][rdflib.plugins.sparql.results.txtresults.TXTResultSerializer]
+                or
+                [xml][rdflib.plugins.sparql.results.xmlresults.XMLResultSerializer]
 
-        :param destination: Path of file output or BufferedIOBase object to write the output to.
-        :param encoding: Encoding of output.
-        :param format: One of ['csv', 'json', 'txt', xml']
-        :param args:
-        :return: bytes
+        Returns:
+            Serialized result, when destination is not given.
         """
         if self.type in ("CONSTRUCT", "DESCRIBE"):
             # type error: Item "None" of "Optional[Graph]" has no attribute "serialize"
@@ -318,7 +316,8 @@ class Result(object):
         serializer = plugin.get(format, ResultSerializer)(self)
         if destination is None:
             streamb: BytesIO = BytesIO()
-            stream2 = EncodeOnlyUnicode(streamb)
+            stream2 = EncodeOnlyUnicode(streamb)  # TODO: Remove the need for this
+            # TODO: All QueryResult serializers should write to a Bytes Stream.
             # type error: Argument 1 to "serialize" of "ResultSerializer" has incompatible type "EncodeOnlyUnicode"; expected "IO[Any]"
             serializer.serialize(stream2, encoding=encoding, **args)  # type: ignore[arg-type]
             return streamb.getvalue()
@@ -358,7 +357,7 @@ class Result(object):
 
     def __iter__(
         self,
-    ) -> Iterator[Union["_TripleType", bool, ResultRow]]:
+    ) -> Iterator[Union[_TripleType, bool, ResultRow]]:
         if self.type in ("CONSTRUCT", "DESCRIBE"):
             # type error: Item "None" of "Optional[Graph]" has no attribute "__iter__" (not iterable)
             for t in self.graph:  # type: ignore[union-attr]
@@ -409,11 +408,11 @@ class Result(object):
                 return self.vars == other.vars and self.bindings == other.bindings
             else:
                 return self.graph == other.graph
-        except:
+        except Exception:
             return False
 
 
-class ResultParser(object):
+class ResultParser:
     def __init__(self):
         pass
 
@@ -423,7 +422,7 @@ class ResultParser(object):
         pass  # abstract
 
 
-class ResultSerializer(object):
+class ResultSerializer:
     def __init__(self, result: Result):
         self.result = result
 

@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """
 notation3.py - Standalone Notation3 Parser
 Derived from CWM, the Closed World Machine
@@ -27,6 +26,7 @@ Modified to work with rdflib by Gunnar Aastrand Grimnes
 Copyright 2010, Gunnar A. Grimnes
 
 """
+
 from __future__ import annotations
 
 import codecs
@@ -57,7 +57,7 @@ from uuid import uuid4
 
 from rdflib.compat import long_type
 from rdflib.exceptions import ParserError
-from rdflib.graph import ConjunctiveGraph, Graph, QuotedGraph
+from rdflib.graph import Dataset, Graph, QuotedGraph
 from rdflib.term import (
     _XSD_PFX,
     BNode,
@@ -83,6 +83,7 @@ __all__ = [
     "Formula",
     "RDFSink",
     "SinkParser",
+    "sfloat",
 ]
 
 from rdflib.parser import Parser
@@ -94,18 +95,18 @@ _AnyT = TypeVar("_AnyT")
 
 
 def splitFragP(uriref: str, punc: int = 0) -> Tuple[str, str]:
-    """split a URI reference before the fragment
+    """Split a URI reference before the fragment
 
-    Punctuation is kept.
+    Punctuation is kept. e.g.
 
-    e.g.
-
+    ```python
     >>> splitFragP("abc#def")
     ('abc', '#def')
 
     >>> splitFragP("abcdef")
     ('abcdef', '')
 
+    ```
     """
 
     i = uriref.rfind("#")
@@ -123,15 +124,19 @@ def join(here: str, there: str) -> str:
     (non-ascii characters are supported/doctested;
     haven't checked the details of the IRI spec though)
 
-    ``here`` is assumed to be absolute.
-    ``there`` is URI reference.
+    `here` is assumed to be absolute.
+    `there` is URI reference.
 
+    ```python
     >>> join('http://example/x/y/z', '../abc')
     'http://example/x/abc'
+
+    ```
 
     Raise ValueError if there uses relative path
     syntax but here has no hierarchical path.
 
+    ```python
     >>> join('mid:foo@example', '../foo') # doctest: +NORMALIZE_WHITESPACE
     Traceback (most recent call last):
         raise ValueError(here)
@@ -144,13 +149,18 @@ def join(here: str, there: str) -> str:
     >>> join('mid:foo@example', '#foo')
     'mid:foo@example#foo'
 
+    ```
+
     We grok IRIs
 
-    >>> len(u'Andr\\xe9')
+    ```python
+    >>> len('Andr\\xe9')
     5
 
-    >>> join('http://example.org/', u'#Andr\\xe9')
-    u'http://example.org/#Andr\\xe9'
+    >>> join('http://example.org/', '#Andr\\xe9')
+    'http://example.org/#Andr\\xe9'
+
+    ```
     """
 
     #    assert(here.find("#") < 0), \
@@ -223,7 +233,6 @@ def base() -> str:
     this yield the URI of the file.
     If we had a reliable way of getting a computer name,
     we should put it in the hostname just to prevent ambiguity
-
     """
     # return "file://" + hostname + os.getcwd() + "/"
     return "file://" + _fixslash(os.getcwd()) + "/"
@@ -276,7 +285,7 @@ N3_List = (SYMBOL, List_NS + "List")
 N3_Empty = (SYMBOL, List_NS + "Empty")
 
 
-runNamespaceValue = None
+runNamespaceValue: Optional[str] = None
 
 
 def runNamespace() -> str:
@@ -353,7 +362,7 @@ numberCharsPlus = numberChars | {"+", "."}
 def unicodeExpand(m: Match) -> str:
     try:
         return chr(int(m.group(1), 16))
-    except:
+    except Exception:
         raise Exception("Invalid unicode code point: " + m.group(1))
 
 
@@ -380,11 +389,15 @@ interesting = re.compile(r"""[\\\r\n\"\']""")
 langcode = re.compile(r"[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*")
 
 
+class sfloat(str):  # noqa: N801
+    """don't normalize raw XSD.double string representation"""
+
+
 class SinkParser:
     def __init__(
         self,
-        store: "RDFSink",
-        openFormula: Optional["Formula"] = None,
+        store: RDFSink,
+        openFormula: Optional[Formula] = None,
         thisDoc: str = "",
         baseURI: Optional[str] = None,
         genPrefix: str = "",
@@ -475,7 +488,7 @@ class SinkParser:
     def formula(self) -> Optional[Formula]:
         return self._formula
 
-    def loadStream(self, stream: Union[IO[str], IO[bytes]]) -> Optional["Formula"]:
+    def loadStream(self, stream: Union[IO[str], IO[bytes]]) -> Optional[Formula]:
         return self.loadBuf(stream.read())  # Not ideal
 
     def loadBuf(self, buf: Union[str, bytes]) -> Optional[Formula]:
@@ -541,7 +554,7 @@ class SinkParser:
         we must not be at end of file.
 
         if colon, then keyword followed by colon is ok
-        (@prefix:<blah> is ok, rdf:type shortcut a must be followed by ws)
+        (`@prefix:<blah>` is ok, rdf:type shortcut a must be followed by ws)
         """
 
         assert tok[0] not in _notNameChars  # not for punctuation
@@ -759,7 +772,7 @@ class SinkParser:
         # was: self._store.startDoc()
         self._store.startDoc(self._formula)
 
-    def endDoc(self) -> Optional["Formula"]:
+    def endDoc(self) -> Optional[Formula]:
         """Signal end of document and stop parsing. returns formula"""
         self._store.endDoc(self._formula)  # don't canonicalize yet
         return self._formula
@@ -1528,7 +1541,7 @@ class SinkParser:
                 m = exponent_syntax.match(argstr, i)
                 if m:
                     j = m.end()
-                    res.append(float(argstr[i:j]))
+                    res.append(sfloat(argstr[i:j]))
                     return j
 
                 m = decimal_syntax.match(argstr, i)
@@ -1711,7 +1724,7 @@ class SinkParser:
             )
         try:
             return i + n, reg.sub(unicodeExpand, "\\" + prefix + argstr[i : i + n])
-        except:
+        except Exception:
             raise BadSyntax(
                 self._thisDoc,
                 startline,
@@ -1734,7 +1747,7 @@ class SinkParser:
 # [  is  operator:plus  of (  \1  \2 ) ]
 
 
-class BadSyntax(SyntaxError):
+class BadSyntax(SyntaxError):  # noqa: N818
     def __init__(self, uri: str, lines: int, argstr: str, i: int, why: str):
         self._str = argstr.encode("utf-8")  # Better go back to strings for errors
         self._i = i
@@ -1773,7 +1786,7 @@ class BadSyntax(SyntaxError):
 
 
 ###############################################################################
-class Formula(object):
+class Formula:
     number = 0
 
     def __init__(self, parent: Graph):
@@ -1815,7 +1828,7 @@ class Formula(object):
 r_hibyte = re.compile(r"([\x80-\xff])")
 
 
-class RDFSink(object):
+class RDFSink:
     def __init__(self, graph: Graph):
         self.rootFormula: Optional[Formula] = None
         self.uuid = uuid4().hex
@@ -1911,7 +1924,7 @@ class RDFSink(object):
     def normalise(
         self,
         f: Optional[Formula],
-        n: Union[Tuple[int, str], bool, int, Decimal, float, _AnyT],
+        n: Union[Tuple[int, str], bool, int, Decimal, sfloat, _AnyT],
     ) -> Union[URIRef, Literal, BNode, _AnyT]:
         if isinstance(n, tuple):
             return URIRef(str(n[1]))
@@ -1931,7 +1944,7 @@ class RDFSink(object):
             s = Literal(value, datatype=DECIMAL_DATATYPE)
             return s
 
-        if isinstance(n, float):
+        if isinstance(n, sfloat):
             s = Literal(str(n), datatype=DOUBLE_DATATYPE)
             return s
 
@@ -1947,7 +1960,7 @@ class RDFSink(object):
         #    f.universals[n] = f.newBlankNode()
         #    return f.universals[n]
         # type error: Incompatible return value type (got "Union[int, _AnyT]", expected "Union[URIRef, Literal, BNode, _AnyT]")  [return-value]
-        return n  # type: ignore[return-value]
+        return n
 
     def intern(self, something: _AnyT) -> _AnyT:
         return something
@@ -1972,9 +1985,11 @@ def hexify(ustr: str) -> bytes:
     """Use URL encoding to return an ASCII string
     corresponding to the given UTF8 string
 
+    ```python
     >>> hexify("http://example/a b")
     b'http://example/a%20b'
 
+    ```
     """
     # s1=ustr.encode('utf-8')
     s = ""
@@ -1988,9 +2003,7 @@ def hexify(ustr: str) -> bytes:
 
 
 class TurtleParser(Parser):
-
-    """
-    An RDFLib parser for Turtle
+    """An RDFLib parser for Turtle
 
     See http://www.w3.org/TR/turtle/
     """
@@ -2000,7 +2013,7 @@ class TurtleParser(Parser):
 
     def parse(
         self,
-        source: "InputSource",
+        source: InputSource,
         graph: Graph,
         encoding: Optional[str] = "utf-8",
         turtle: bool = True,
@@ -2025,12 +2038,9 @@ class TurtleParser(Parser):
 
 
 class N3Parser(TurtleParser):
-
-    """
-    An RDFLib parser for Notation3
+    """An RDFLib parser for Notation3
 
     See http://www.w3.org/DesignIssues/Notation3.html
-
     """
 
     def __init__(self):
@@ -2049,7 +2059,7 @@ class N3Parser(TurtleParser):
         elif not fa:
             raise ParserError("Cannot parse N3 into non-formula-aware store.")
 
-        conj_graph = ConjunctiveGraph(store=graph.store)
+        conj_graph = Dataset(store=graph.store)
         conj_graph.default_context = graph  # TODO: CG __init__ should have a
         # default_context arg
         # TODO: update N3Processor so that it can use conj_graph as the sink

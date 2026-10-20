@@ -4,7 +4,9 @@ from attr import (
     NOTHING,
     Attribute,
     AttrsInstance,
+    Converter,
     Factory,
+    NothingType,
     _make_getattr,
     assoc,
     cmp_using,
@@ -20,12 +22,20 @@ from attr import (
     resolve_types,
     validate,
 )
-from attr._next_gen import asdict, astuple
+from attr._make import ClassProps
+from attr._next_gen import asdict, astuple, inspect
 
 from . import converters, exceptions, filters, setters, validators
 
 
 __all__ = [
+    "NOTHING",
+    "Attribute",
+    "AttrsInstance",
+    "ClassProps",
+    "Converter",
+    "Factory",
+    "NothingType",
     "__author__",
     "__copyright__",
     "__description__",
@@ -39,23 +49,20 @@ __all__ = [
     "asdict",
     "assoc",
     "astuple",
-    "Attribute",
-    "AttrsInstance",
     "cmp_using",
     "converters",
     "define",
     "evolve",
     "exceptions",
-    "Factory",
     "field",
-    "fields_dict",
     "fields",
+    "fields_dict",
     "filters",
     "frozen",
     "has",
+    "inspect",
     "make_class",
     "mutable",
-    "NOTHING",
     "resolve_types",
     "setters",
     "validate",

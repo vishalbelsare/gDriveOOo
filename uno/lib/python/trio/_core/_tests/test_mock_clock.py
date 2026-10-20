@@ -1,16 +1,18 @@
-from math import inf
 import time
+from math import inf
 
 import pytest
 
 from trio import sleep
+
 from ... import _core
 from .. import wait_all_tasks_blocked
 from .._mock_clock import MockClock
+from .._run import GLOBAL_RUN_CONTEXT
 from .tutil import slow
 
 
-def test_mock_clock():
+def test_mock_clock() -> None:
     REAL_NOW = 123.0
     c = MockClock()
     c._real_clock = lambda: REAL_NOW
@@ -19,14 +21,14 @@ def test_mock_clock():
     assert c.current_time() == 0
     c.jump(1.2)
     assert c.current_time() == 1.2
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"^time can't go backwards$"):
         c.jump(-1)
     assert c.current_time() == 1.2
     assert c.deadline_to_sleep_time(1.1) == 0
     assert c.deadline_to_sleep_time(1.2) == 0
     assert c.deadline_to_sleep_time(1.3) > 999999
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"^rate must be >= 0$"):
         c.rate = -1
     assert c.rate == 0
 
@@ -54,7 +56,7 @@ def test_mock_clock():
     assert c2.current_time() < 10
 
 
-async def test_mock_clock_autojump(mock_clock):
+async def test_mock_clock_autojump(mock_clock: MockClock) -> None:
     assert mock_clock.autojump_threshold == inf
 
     mock_clock.autojump_threshold = 0
@@ -91,10 +93,11 @@ async def test_mock_clock_autojump(mock_clock):
     mock_clock.autojump_threshold = 0
     # if the above line didn't take affect immediately, then this would be
     # bad:
-    await sleep(100000)
+    # ignore ASYNC116, not sleep_forever, trying to test a large but finite sleep
+    await sleep(100000)  # noqa: ASYNC116
 
 
-async def test_mock_clock_autojump_interference(mock_clock):
+async def test_mock_clock_autojump_interference(mock_clock: MockClock) -> None:
     mock_clock.autojump_threshold = 0.02
 
     mock_clock2 = MockClock()
@@ -108,10 +111,11 @@ async def test_mock_clock_autojump_interference(mock_clock):
     await wait_all_tasks_blocked(0.015)
 
     # but the 0.02 limit does apply
-    await sleep(100000)
+    # ignore ASYNC116, not sleep_forever, trying to test a large but finite sleep
+    await sleep(100000)  # noqa: ASYNC116
 
 
-def test_mock_clock_autojump_preset():
+def test_mock_clock_autojump_preset() -> None:
     # Check that we can set the autojump_threshold before the clock is
     # actually in use, and it gets picked up
     mock_clock = MockClock(autojump_threshold=0.1)
@@ -121,7 +125,9 @@ def test_mock_clock_autojump_preset():
     assert time.perf_counter() - real_start < 1
 
 
-async def test_mock_clock_autojump_0_and_wait_all_tasks_blocked_0(mock_clock):
+async def test_mock_clock_autojump_0_and_wait_all_tasks_blocked_0(
+    mock_clock: MockClock,
+) -> None:
     # Checks that autojump_threshold=0 doesn't interfere with
     # calling wait_all_tasks_blocked with the default cushion=0.
 
@@ -129,11 +135,11 @@ async def test_mock_clock_autojump_0_and_wait_all_tasks_blocked_0(mock_clock):
 
     record = []
 
-    async def sleeper():
+    async def sleeper() -> None:
         await sleep(100)
         record.append("yawn")
 
-    async def waiter():
+    async def waiter() -> None:
         await wait_all_tasks_blocked()
         record.append("waiter woke")
         await sleep(1000)
@@ -147,7 +153,9 @@ async def test_mock_clock_autojump_0_and_wait_all_tasks_blocked_0(mock_clock):
 
 
 @slow
-async def test_mock_clock_autojump_0_and_wait_all_tasks_blocked_nonzero(mock_clock):
+async def test_mock_clock_autojump_0_and_wait_all_tasks_blocked_nonzero(
+    mock_clock: MockClock,
+) -> None:
     # Checks that autojump_threshold=0 doesn't interfere with
     # calling wait_all_tasks_blocked with a non-zero cushion.
 
@@ -155,11 +163,11 @@ async def test_mock_clock_autojump_0_and_wait_all_tasks_blocked_nonzero(mock_clo
 
     record = []
 
-    async def sleeper():
+    async def sleeper() -> None:
         await sleep(100)
         record.append("yawn")
 
-    async def waiter():
+    async def waiter() -> None:
         await wait_all_tasks_blocked(1)
         record.append("waiter done")
 
@@ -168,3 +176,18 @@ async def test_mock_clock_autojump_0_and_wait_all_tasks_blocked_nonzero(mock_clo
         nursery.start_soon(waiter)
 
     assert record == ["waiter done", "yawn"]
+
+
+async def test_initialization_doesnt_mutate_runner() -> None:
+    before = (
+        GLOBAL_RUN_CONTEXT.runner.clock,
+        GLOBAL_RUN_CONTEXT.runner.clock_autojump_threshold,
+    )
+
+    MockClock(autojump_threshold=2, rate=3)
+
+    after = (
+        GLOBAL_RUN_CONTEXT.runner.clock,
+        GLOBAL_RUN_CONTEXT.runner.clock_autojump_threshold,
+    )
+    assert before == after

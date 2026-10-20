@@ -1,31 +1,41 @@
-import attr
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, NoReturn
+
+import attrs
 import pytest
-from ... import _core, _abc
+
+from ... import _abc, _core
 from .tutil import check_sequence_matches
 
+if TYPE_CHECKING:
+    from collections.abc import Container, Iterable
 
-@attr.s(eq=False, hash=False)
-class TaskRecorder:
-    record = attr.ib(factory=list)
+    from ...lowlevel import Task
 
-    def before_run(self):
-        self.record.append(("before_run",))
 
-    def task_scheduled(self, task):
+@attrs.define(eq=False, slots=False)
+class TaskRecorder(_abc.Instrument):
+    record: list[tuple[str, Task | None]] = attrs.Factory(list)
+
+    def before_run(self) -> None:
+        self.record.append(("before_run", None))
+
+    def task_scheduled(self, task: Task) -> None:
         self.record.append(("schedule", task))
 
-    def before_task_step(self, task):
+    def before_task_step(self, task: Task) -> None:
         assert task is _core.current_task()
         self.record.append(("before", task))
 
-    def after_task_step(self, task):
+    def after_task_step(self, task: Task) -> None:
         assert task is _core.current_task()
         self.record.append(("after", task))
 
-    def after_run(self):
-        self.record.append(("after_run",))
+    def after_run(self) -> None:
+        self.record.append(("after_run", None))
 
-    def filter_tasks(self, tasks):
+    def filter_tasks(self, tasks: Container[Task]) -> Iterable[tuple[str, Task | None]]:
         for item in self.record:
             if item[0] in ("schedule", "before", "after") and item[1] in tasks:
                 yield item
@@ -33,7 +43,7 @@ class TaskRecorder:
                 yield item
 
 
-def test_instruments(recwarn):
+def test_instruments(recwarn: object) -> None:
     r1 = TaskRecorder()
     r2 = TaskRecorder()
     r3 = TaskRecorder()
@@ -43,7 +53,7 @@ def test_instruments(recwarn):
     # We use a child task for this, because the main task does some extra
     # bookkeeping stuff that can leak into the instrument results, and we
     # don't want to deal with it.
-    async def task_fn():
+    async def task_fn() -> None:
         nonlocal task
         task = _core.current_task()
 
@@ -59,7 +69,7 @@ def test_instruments(recwarn):
         for _ in range(1):
             await _core.checkpoint()
 
-    async def main():
+    async def main() -> None:
         async with _core.open_nursery() as nursery:
             nursery.start_soon(task_fn)
 
@@ -69,26 +79,27 @@ def test_instruments(recwarn):
     # reschedules the task immediately upon yielding, before the
     # after_task_step event fires.
     expected = (
-        [("before_run",), ("schedule", task)]
+        [("before_run", None), ("schedule", task)]
         + [("before", task), ("schedule", task), ("after", task)] * 5
-        + [("before", task), ("after", task), ("after_run",)]
+        + [("before", task), ("after", task), ("after_run", None)]
     )
     assert r1.record == r2.record + r3.record
+    assert task is not None
     assert list(r1.filter_tasks([task])) == expected
 
 
-def test_instruments_interleave():
+def test_instruments_interleave() -> None:
     tasks = {}
 
-    async def two_step1():
+    async def two_step1() -> None:
         tasks["t1"] = _core.current_task()
         await _core.checkpoint()
 
-    async def two_step2():
+    async def two_step2() -> None:
         tasks["t2"] = _core.current_task()
         await _core.checkpoint()
 
-    async def main():
+    async def main() -> None:
         async with _core.open_nursery() as nursery:
             nursery.start_soon(two_step1)
             nursery.start_soon(two_step2)
@@ -97,7 +108,7 @@ def test_instruments_interleave():
     _core.run(main, instruments=[r])
 
     expected = [
-        ("before_run",),
+        ("before_run", None),
         ("schedule", tasks["t1"]),
         ("schedule", tasks["t2"]),
         {
@@ -114,52 +125,52 @@ def test_instruments_interleave():
             ("before", tasks["t2"]),
             ("after", tasks["t2"]),
         },
-        ("after_run",),
+        ("after_run", None),
     ]
     print(list(r.filter_tasks(tasks.values())))
     check_sequence_matches(list(r.filter_tasks(tasks.values())), expected)
 
 
-def test_null_instrument():
+def test_null_instrument() -> None:
     # undefined instrument methods are skipped
-    class NullInstrument:
-        def something_unrelated(self):
+    class NullInstrument(_abc.Instrument):
+        def something_unrelated(self) -> None:
             pass  # pragma: no cover
 
-    async def main():
+    async def main() -> None:
         await _core.checkpoint()
 
     _core.run(main, instruments=[NullInstrument()])
 
 
-def test_instrument_before_after_run():
+def test_instrument_before_after_run() -> None:
     record = []
 
-    class BeforeAfterRun:
-        def before_run(self):
+    class BeforeAfterRun(_abc.Instrument):
+        def before_run(self) -> None:
             record.append("before_run")
 
-        def after_run(self):
+        def after_run(self) -> None:
             record.append("after_run")
 
-    async def main():
+    async def main() -> None:
         pass
 
     _core.run(main, instruments=[BeforeAfterRun()])
     assert record == ["before_run", "after_run"]
 
 
-def test_instrument_task_spawn_exit():
+def test_instrument_task_spawn_exit() -> None:
     record = []
 
-    class SpawnExitRecorder:
-        def task_spawned(self, task):
+    class SpawnExitRecorder(_abc.Instrument):
+        def task_spawned(self, task: Task) -> None:
             record.append(("spawned", task))
 
-        def task_exited(self, task):
+        def task_exited(self, task: Task) -> None:
             record.append(("exited", task))
 
-    async def main():
+    async def main() -> Task:
         return _core.current_task()
 
     main_task = _core.run(main, instruments=[SpawnExitRecorder()])
@@ -169,20 +180,20 @@ def test_instrument_task_spawn_exit():
 
 # This test also tests having a crash before the initial task is even spawned,
 # which is very difficult to handle.
-def test_instruments_crash(caplog):
+def test_instruments_crash(caplog: pytest.LogCaptureFixture) -> None:
     record = []
 
-    class BrokenInstrument:
-        def task_scheduled(self, task):
+    class BrokenInstrument(_abc.Instrument):
+        def task_scheduled(self, task: Task) -> NoReturn:
             record.append("scheduled")
             raise ValueError("oops")
 
-        def close(self):
+        def close(self) -> None:
             # Shouldn't be called -- tests that the instrument disabling logic
             # works right.
             record.append("closed")  # pragma: no cover
 
-    async def main():
+    async def main() -> Task:
         record.append("main ran")
         return _core.current_task()
 
@@ -192,26 +203,30 @@ def test_instruments_crash(caplog):
     # the TaskRecorder kept going throughout, even though the BrokenInstrument
     # was disabled
     assert ("after", main_task) in r.record
-    assert ("after_run",) in r.record
+    assert ("after_run", None) in r.record
     # And we got a log message
-    exc_type, exc_value, exc_traceback = caplog.records[0].exc_info
+    assert caplog.records[0].exc_info is not None
+    exc_type, exc_value, _exc_traceback = caplog.records[0].exc_info
     assert exc_type is ValueError
     assert str(exc_value) == "oops"
     assert "Instrument has been disabled" in caplog.records[0].message
 
 
-def test_instruments_monkeypatch():
+def test_instruments_monkeypatch() -> None:
     class NullInstrument(_abc.Instrument):
         pass
 
     instrument = NullInstrument()
 
-    async def main():
-        record = []
+    async def main() -> None:
+        record: list[Task] = []
 
         # Changing the set of hooks implemented by an instrument after
         # it's installed doesn't make them start being called right away
-        instrument.before_task_step = record.append
+        instrument.before_task_step = (  # type: ignore[method-assign]
+            record.append  # type: ignore[assignment] # append is pos-only
+        )
+
         await _core.checkpoint()
         await _core.checkpoint()
         assert len(record) == 0
@@ -232,17 +247,17 @@ def test_instruments_monkeypatch():
     _core.run(main, instruments=[instrument])
 
 
-def test_instrument_that_raises_on_getattr():
-    class EvilInstrument:
-        def task_exited(self, task):
-            assert False  # pragma: no cover
+def test_instrument_that_raises_on_getattr() -> None:
+    class EvilInstrument(_abc.Instrument):
+        def task_exited(self, task: Task) -> NoReturn:
+            raise AssertionError("this should never happen")  # pragma: no cover
 
         @property
-        def after_run(self):
+        def after_run(self) -> NoReturn:
             raise ValueError("oops")
 
-    async def main():
-        with pytest.raises(ValueError):
+    async def main() -> None:
+        with pytest.raises(ValueError, match=r"^oops$"):
             _core.add_instrument(EvilInstrument())
 
         # Make sure the instrument is fully removed from the per-method lists
@@ -251,3 +266,50 @@ def test_instrument_that_raises_on_getattr():
         assert "task_exited" not in runner.instruments
 
     _core.run(main)
+
+
+def test_instrument_call_trio_context() -> None:
+    called = set()
+
+    class Instrument(_abc.Instrument):
+        pass
+
+    hooks = {
+        # not run in task context
+        "after_io_wait": (True, False),
+        "before_io_wait": (True, False),
+        "before_run": (True, False),
+        "after_run": (True, False),
+        # run in task context
+        "before_task_step": (True, True),
+        "after_task_step": (True, True),
+        "task_exited": (True, True),
+        # depends
+        "task_scheduled": (True, None),
+        "task_spawned": (True, None),
+    }
+    for hook, val in hooks.items():
+
+        def h(
+            self: Instrument,
+            *args: object,
+            hook: str = hook,
+            val: tuple[bool, bool | None] = val,
+        ) -> None:
+            fail_str = f"failed in {hook}"
+
+            assert _core.in_trio_run() == val[0], fail_str
+            if val[1] is not None:
+                assert _core.in_trio_task() == val[1], fail_str
+            called.add(hook)
+
+        setattr(Instrument, hook, h)
+
+    async def main() -> None:
+        await _core.checkpoint()
+
+        async with _core.open_nursery() as nursery:
+            nursery.start_soon(_core.checkpoint)
+
+    _core.run(main, instruments=[Instrument()])
+    assert called == set(hooks)

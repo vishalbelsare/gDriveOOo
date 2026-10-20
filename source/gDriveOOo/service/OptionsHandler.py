@@ -4,7 +4,7 @@
 """
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -27,21 +27,27 @@
 ╚════════════════════════════════════════════════════════════════════════════════════╝
 """
 
-import uno
 import unohelper
 
+from com.sun.star.logging.LogLevel import SEVERE
+
 from com.sun.star.lang import XServiceInfo
+
 from com.sun.star.awt import XContainerWindowEventHandler
 
 from gdrive import OptionsManager
 
+from gdrive import getLogger
+
 from gdrive import g_identifier
+from gdrive import g_defaultlog
 
 import traceback
 
 # pythonloader looks for a static g_ImplementationHelper variable
 g_ImplementationHelper = unohelper.ImplementationHelper()
-g_ImplementationName = '%s.OptionsHandler' % g_identifier
+g_ImplementationName = 'io.github.prrvchr.gDriveOOo.OptionsHandler'
+g_ServiceNames = ('io.github.prrvchr.gDriveOOo.OptionsHandler', )
 
 
 class OptionsHandler(unohelper.Base,
@@ -50,6 +56,7 @@ class OptionsHandler(unohelper.Base,
     def __init__(self, ctx):
         self._ctx = ctx
         self._manager = None
+        self._logger = getLogger(ctx, g_defaultlog)
 
     # XContainerWindowEventHandler
     def callHandlerMethod(self, window, event, method):
@@ -57,7 +64,7 @@ class OptionsHandler(unohelper.Base,
             handled = False
             if method == 'external_event':
                 if event == 'initialize':
-                    self._manager = OptionsManager(self._ctx, window)
+                    self._manager = OptionsManager(self._ctx, self, self._logger, window)
                     handled = True
                 elif event == 'ok':
                     self._manager.saveSetting()
@@ -69,13 +76,19 @@ class OptionsHandler(unohelper.Base,
                 self._manager.enableShare(bool(event.Source.State))
                 handled = True
             elif method == 'EnableSync':
-                self._manager.enableTimeout(True)
+                self._manager.enableSync(True)
                 handled = True
             elif method == 'DisableSync':
-                self._manager.enableTimeout(False)
+                self._manager.enableSync(False)
+                handled = True
+            elif method == 'Reset':
+                self._manager.setReset(bool(event.Source.State))
                 handled = True
             elif method == 'ViewData':
                 self._manager.viewData()
+                handled = True
+            elif method == 'ViewFile':
+                self._manager.viewFile()
                 handled = True
             elif method == 'Download':
                 self._manager.download()
@@ -83,29 +96,58 @@ class OptionsHandler(unohelper.Base,
             elif method == 'Upload':
                 self._manager.upload()
                 handled = True
+            elif method == 'SpinUp1':
+                self._manager.spinUp(0)
+                handled = True
+            elif method == 'SpinDown1':
+                self._manager.spinDown(0)
+                handled = True
+            elif method == 'SpinUp2':
+                self._manager.spinUp(1)
+                handled = True
+            elif method == 'SpinDown2':
+                self._manager.spinDown(1)
+                handled = True
+            elif method == 'EnableMacro':
+                self._manager.enableMacro(bool(event.Source.State))
+                handled = True
+            elif method == 'Customize':
+                self._manager.customizeMenu()
+                handled = True
             return handled
         except Exception as e:
-            msg = "OptionsHandler.callHandlerMethod() Error: %s" % traceback.format_exc()
-            print(msg)
+            print("OptionsHandler.callHandlerMethod() ERROR: %s" % traceback.format_exc())
+            self._logger.logprb(SEVERE, 'OptionsHandler', 'callHandlerMethod', 141, e, traceback.format_exc())
 
     def getSupportedMethodNames(self):
         return ('external_event',
                 'EnableShare',
                 'EnableSync',
                 'DisableSync',
+                'Reset',
                 'ViewData',
+                'ViewFile',
                 'Download',
-                'Upload')
+                'Upload',
+                'SpinUp1',
+                'SpinDown1',
+                'SpinUp2',
+                'SpinDown2',
+                'EnableMacro',
+                'Customize')
 
     # XServiceInfo
     def supportsService(self, service):
         return g_ImplementationHelper.supportsService(g_ImplementationName, service)
+
     def getImplementationName(self):
         return g_ImplementationName
+
     def getSupportedServiceNames(self):
         return g_ImplementationHelper.getSupportedServiceNames(g_ImplementationName)
 
 
-g_ImplementationHelper.addImplementation(OptionsHandler,                            # UNO object class
-                                         g_ImplementationName,                      # Implementation name
-                                        (g_ImplementationName,))                    # List of implemented services
+g_ImplementationHelper.addImplementation(OptionsHandler,                  # UNO object class
+                                         g_ImplementationName,            # Implementation name
+                                         g_ServiceNames)                  # List of implemented services
+

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 These method recursively evaluate the SPARQL Algebra
 
@@ -8,17 +6,17 @@ return the SPARQLResult object
 
 evalPart is called on each level and will delegate to the right method
 
-A rdflib.plugins.sparql.sparql.QueryContext is passed along, keeping
+A `rdflib.plugins.sparql.sparql.QueryContext` is passed along, keeping
 information needed for evaluation
 
 A list of dicts (solution mappings) is returned, apart from GroupBy which may
 also return a dict of list of dicts
-
 """
+
+from __future__ import annotations
 
 import collections
 import itertools
-import json as j
 import re
 from typing import (
     TYPE_CHECKING,
@@ -62,6 +60,16 @@ from rdflib.term import BNode, Identifier, Literal, URIRef, Variable
 
 if TYPE_CHECKING:
     from rdflib.paths import Path
+
+import json
+
+try:
+    import orjson
+
+    _HAS_ORJSON = True
+except ImportError:
+    orjson = None  # type: ignore[assignment, unused-ignore]
+    _HAS_ORJSON = False
 
 _Triple = Tuple[Identifier, Identifier, Identifier]
 
@@ -157,7 +165,7 @@ def evalJoin(ctx: QueryContext, join: CompValue) -> Generator[FrozenDict, None, 
         return _join(a, b)
 
 
-def evalUnion(ctx: QueryContext, union: CompValue) -> Iterable[FrozenBindings]:
+def evalUnion(ctx: QueryContext, union: CompValue) -> List[Any]:
     branch1_branch2 = []
     for x in evalPart(ctx, union.p1):
         branch1_branch2.append(x)
@@ -182,7 +190,7 @@ def evalLeftJoin(
         for b in evalPart(c, join.p2):
             if _ebv(join.expr, b.forget(ctx)):
                 ok = True
-                yield b
+                yield b.merge(a)
         if not ok:
             # we've cheated, the ctx above may contain
             # vars bound outside our scope
@@ -364,10 +372,13 @@ def evalServiceQuery(ctx: QueryContext, part: CompValue):
                 )
             )
         if response.status == 200:
-            json = j.loads(response.read())
-            variables = res["vars_"] = json["head"]["vars"]
+            if _HAS_ORJSON:
+                json_dict = orjson.loads(response.read())
+            else:
+                json_dict = json.loads(response.read())
+            variables = res["vars_"] = json_dict["head"]["vars"]
             # or just return the bindings?
-            res = json["results"]["bindings"]
+            res = json_dict["results"]["bindings"]
             if len(res) > 0:
                 for r in res:
                     # type error: Argument 2 to "_yieldBindingsFromServiceCallResult" has incompatible type "str"; expected "Dict[str, Dict[str, str]]"
@@ -630,7 +641,7 @@ def evalDescribeQuery(ctx: QueryContext, query) -> Dict[str, Union[str, Graph]]:
     # Get a CBD for all resources identified to describe
     for resource in to_describe:
         # type error: Item "None" of "Optional[Graph]" has no attribute "cbd"
-        graph += ctx.graph.cbd(resource)  # type: ignore[union-attr]
+        ctx.graph.cbd(resource, target_graph=graph)  # type: ignore[union-attr]
 
     res: Dict[str, Union[str, Graph]] = {}
     res["type_"] = "DESCRIBE"
@@ -642,54 +653,32 @@ def evalDescribeQuery(ctx: QueryContext, query) -> Dict[str, Union[str, Graph]]:
 def evalQuery(
     graph: Graph,
     query: Query,
-    initBindings: Mapping[str, Identifier],
+    initBindings: Optional[Mapping[str, Identifier]] = None,
     base: Optional[str] = None,
 ) -> Mapping[Any, Any]:
-    """
+    """Evaluate a SPARQL query against a graph.
 
-    .. caution::
+    !!! warning "Caution"
 
         This method can access indirectly requested network endpoints, for
         example, query processing will attempt to access network endpoints
-        specified in ``SERVICE`` directives.
+        specified in `SERVICE` directives.
 
         When processing untrusted or potentially malicious queries, measures
         should be taken to restrict network and file access.
 
         For information on available security measures, see the RDFLib
-        :doc:`Security Considerations </security_considerations>`
+        [Security Considerations](../security_considerations.md)
         documentation.
     """
-
-    initBindings = dict((Variable(k), v) for k, v in initBindings.items())
-
-    ctx = QueryContext(graph, initBindings=initBindings)
-
-    ctx.prologue = query.prologue
     main = query.algebra
 
-    if main.datasetClause:
-        if ctx.dataset is None:
-            raise Exception(
-                "Non-conjunctive-graph doesn't know about "
-                + "graphs! Try a query without FROM (NAMED)."
-            )
+    initBindings = dict((Variable(k), v) for k, v in (initBindings or {}).items())
 
-        ctx = ctx.clone()  # or push/pop?
+    ctx = QueryContext(
+        graph, initBindings=initBindings, datasetClause=main.datasetClause
+    )
 
-        firstDefault = False
-        for d in main.datasetClause:
-            if d.default:
-                if firstDefault:
-                    # replace current default graph
-                    dg = ctx.dataset.get_context(BNode())
-                    ctx = ctx.pushGraph(dg)
-                    firstDefault = True
-
-                ctx.load(d.default, default=True)
-
-            elif d.named:
-                g = d.named
-                ctx.load(g, default=False)
+    ctx.prologue = query.prologue
 
     return evalPart(ctx, main)

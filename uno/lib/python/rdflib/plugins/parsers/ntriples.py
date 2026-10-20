@@ -1,11 +1,10 @@
-#!/usr/bin/env python3
-from __future__ import annotations
-
-__doc__ = """\
+"""
 N-Triples Parser
 License: GPL 2, W3C, BSD, or MIT
 Author: Sean B. Palmer, inamidst.com
 """
+
+from __future__ import annotations
 
 import codecs
 import re
@@ -26,9 +25,8 @@ from rdflib.compat import _string_escape_map, decodeUnicodeEscape
 from rdflib.exceptions import ParserError as ParseError
 from rdflib.parser import InputSource, Parser
 from rdflib.term import BNode as bNode
-from rdflib.term import Literal
-from rdflib.term import URIRef
-from rdflib.term import URIRef as URI
+from rdflib.term import Literal, URIRef
+from rdflib.term import URIRef as URI  # noqa: N814
 
 if TYPE_CHECKING:
     import typing_extensions as te
@@ -60,7 +58,7 @@ bufsiz = 2048
 validate = False
 
 
-class DummySink(object):
+class DummySink:
     def __init__(self):
         self.length = 0
 
@@ -101,7 +99,7 @@ def unquote(s: str) -> str:
             m = r_uniquot.match(s)
             if m:
                 s = s[m.end() :]
-                u, U = m.groups()
+                u, U = m.groups()  # noqa: N806
                 codepoint = int(u or U, 16)
                 if codepoint > 0x10FFFF:
                     raise ParseError("Disallowed codepoint: %08X" % codepoint)
@@ -126,33 +124,38 @@ def uriquote(uri: str) -> str:
 _BNodeContextType = MutableMapping[str, bNode]
 
 
-class W3CNTriplesParser(object):
+class W3CNTriplesParser:
     """An N-Triples Parser.
-    This is a legacy-style Triples parser for NTriples provided by W3C
-    Usage::
 
-          p = W3CNTriplesParser(sink=MySink())
-          sink = p.parse(f) # file; use parsestring for a string
+    This is a legacy-style Triples parser for NTriples provided by W3C
+
+    Example:
+        ```python
+        p = W3CNTriplesParser(sink=MySink())
+        sink = p.parse(f) # file; use parsestring for a string
+        ```
 
     To define a context in which blank node identifiers refer to the same blank node
-    across instances of NTriplesParser, pass the same dict as ``bnode_context`` to each
+    across instances of NTriplesParser, pass the same dict as `bnode_context` to each
     instance. By default, a new blank node context is created for each instance of
     `W3CNTriplesParser`.
     """
 
-    __slots__ = ("_bnode_ids", "sink", "buffer", "file", "line")
+    __slots__ = ("_bnode_ids", "sink", "buffer", "file", "line", "skolemize")
 
     def __init__(
         self,
-        sink: Optional[Union[DummySink, "NTGraphSink"]] = None,
+        sink: Optional[Union[DummySink, NTGraphSink]] = None,
         bnode_context: Optional[_BNodeContextType] = None,
     ):
+        self.skolemize = False
+
         if bnode_context is not None:
             self._bnode_ids = bnode_context
         else:
             self._bnode_ids = {}
 
-        self.sink: Union[DummySink, "NTGraphSink"]
+        self.sink: Union[DummySink, NTGraphSink]
         if sink is not None:
             self.sink = sink
         else:
@@ -166,17 +169,20 @@ class W3CNTriplesParser(object):
         self,
         f: Union[TextIO, IO[bytes], codecs.StreamReader],
         bnode_context: Optional[_BNodeContextType] = None,
-    ) -> Union[DummySink, "NTGraphSink"]:
-        """
-        Parse f as an N-Triples file.
+        skolemize: bool = False,
+    ) -> Union[DummySink, NTGraphSink]:
+        """Parse f as an N-Triples file.
 
-        :type f: :term:`file object`
-        :param f: the N-Triples source
-        :type bnode_context: `dict`, optional
-        :param bnode_context: a dict mapping blank node identifiers (e.g., ``a`` in ``_:a``)
-                              to `~rdflib.term.BNode` instances. An empty dict can be
-                              passed in to define a distinct context for a given call to
-                              `parse`.
+        Args:
+            f: The N-Triples source
+            bnode_context: A dict mapping blank node identifiers (e.g., `a` in `_:a`)
+                to [`BNode`][rdflib.term.BNode] instances. An empty dict can be
+                passed in to define a distinct context for a given call to
+                `parse`.
+            skolemize: Whether to skolemize blank nodes
+
+        Returns:
+            The sink containing the parsed triples
         """
 
         if not hasattr(f, "read"):
@@ -186,6 +192,7 @@ class W3CNTriplesParser(object):
             # someone still using a bytestream here?
             f = codecs.getreader("utf-8")(f)
 
+        self.skolemize = skolemize
         self.file = f  # type: ignore[assignment]
         self.buffer = ""
         while True:
@@ -272,7 +279,7 @@ class W3CNTriplesParser(object):
             raise ParseError("Subject must be uriref or nodeID")
         return subj
 
-    def predicate(self) -> URIRef:
+    def predicate(self) -> Union[bNode, URIRef]:
         pred = self.uriref()
         if not pred:
             raise ParseError("Predicate must be uriref")
@@ -286,7 +293,7 @@ class W3CNTriplesParser(object):
             raise ParseError("Unrecognised object type")
         return objt
 
-    def uriref(self) -> Union["te.Literal[False]", URI]:
+    def uriref(self) -> Union[te.Literal[False], URI]:
         if self.peek("<"):
             uri = self.eat(r_uriref).group(1)
             uri = unquote(uri)
@@ -296,25 +303,30 @@ class W3CNTriplesParser(object):
 
     def nodeid(
         self, bnode_context: Optional[_BNodeContextType] = None
-    ) -> Union["te.Literal[False]", bNode]:
+    ) -> Union[te.Literal[False], bNode, URI]:
         if self.peek("_"):
-            # Fix for https://github.com/RDFLib/rdflib/issues/204
-            if bnode_context is None:
-                bnode_context = self._bnode_ids
-            bnode_id = self.eat(r_nodeid).group(1)
-            new_id = bnode_context.get(bnode_id, None)
-            if new_id is not None:
-                # Re-map to id specific to this doc
-                return bNode(new_id)
+            if self.skolemize:
+                bnode_id = self.eat(r_nodeid).group(1)
+                return bNode(bnode_id).skolemize()
+
             else:
-                # Replace with freshly-generated document-specific BNode id
-                bnode = bNode()
-                # Store the mapping
-                bnode_context[bnode_id] = bnode
-                return bnode
+                # Fix for https://github.com/RDFLib/rdflib/issues/204
+                if bnode_context is None:
+                    bnode_context = self._bnode_ids
+                bnode_id = self.eat(r_nodeid).group(1)
+                new_id = bnode_context.get(bnode_id, None)
+                if new_id is not None:
+                    # Re-map to id specific to this doc
+                    return bNode(new_id)
+                else:
+                    # Replace with freshly-generated document-specific BNode id
+                    bnode = bNode()
+                    # Store the mapping
+                    bnode_context[bnode_id] = bnode
+                    return bnode
         return False
 
-    def literal(self) -> Union["te.Literal[False]", Literal]:
+    def literal(self) -> Union[te.Literal[False], Literal]:
         if self.peek('"'):
             lit, lang, dtype = self.eat(r_literal).groups()
             if lang:
@@ -334,33 +346,32 @@ class W3CNTriplesParser(object):
         return False
 
 
-class NTGraphSink(object):
+class NTGraphSink:
     __slots__ = ("g",)
 
-    def __init__(self, graph: "Graph"):
+    def __init__(self, graph: Graph):
         self.g = graph
 
-    def triple(self, s: "_SubjectType", p: "_PredicateType", o: "_ObjectType") -> None:
+    def triple(self, s: _SubjectType, p: _PredicateType, o: _ObjectType) -> None:
         self.g.add((s, p, o))
 
 
 class NTParser(Parser):
-    """parser for the ntriples format, often stored with the .nt extension
+    """Parser for the N-Triples format, often stored with the .nt extension.
 
-    See http://www.w3.org/TR/rdf-testcases/#ntriples"""
+    See http://www.w3.org/TR/rdf-testcases/#ntriples
+    """
 
     __slots__ = ()
 
     @classmethod
-    def parse(cls, source: InputSource, sink: "Graph", **kwargs: Any) -> None:
-        """
-        Parse the NT format
+    def parse(cls, source: InputSource, sink: Graph, **kwargs: Any) -> None:
+        """Parse the NT format.
 
-        :type source: `rdflib.parser.InputSource`
-        :param source: the source of NT-formatted data
-        :type sink: `rdflib.graph.Graph`
-        :param sink: where to send parsed triples
-        :param kwargs: Additional arguments to pass to `.W3CNTriplesParser.parse`
+        Args:
+            source: The source of NT-formatted data
+            sink: Where to send parsed triples
+            **kwargs: Additional arguments to pass to `W3CNTriplesParser.parse`
         """
         f: Union[TextIO, IO[bytes], codecs.StreamReader]
         f = source.getCharacterStream()

@@ -4,7 +4,7 @@
 """
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -27,8 +27,24 @@
 ╚════════════════════════════════════════════════════════════════════════════════════╝
 """
 
-# jdbcDriver configuration
+# jdbcDriverOOo general configuration
 g_extension = 'jdbcDriverOOo'
 g_identifier = 'io.github.prrvchr.%s' % g_extension
 g_service = '%s.Driver' % g_identifier
-g_version = '1.0.5'
+g_services = ('io.github.prrvchr.jdbcdriver.sdbc.Driver',
+              'io.github.prrvchr.jdbcdriver.sdbcx.Driver',
+              'io.github.prrvchr.jdbcdriver.sdb.Driver')
+g_version = '1.7.1'
+g_agent = 'SupportsInstrumentationAgent'
+g_protocol = 'juda:jdbc'
+g_java = '17'
+g_script = 'JavaInfo.io.github.prrvchr.java.info.JavaInfo.getVersion'
+
+# jdbcDriverOOo special configuration
+g_resource = 'resource'
+g_basename = 'Driver'
+g_defaultlog = 'Driver'
+g_errorlog = 'jdbcDriverError'
+
+class State:
+    restart = False

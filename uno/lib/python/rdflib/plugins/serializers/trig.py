@@ -3,7 +3,9 @@ Trig RDF graph serializer for RDFLib.
 See <http://www.w3.org/TR/trig/> for syntax specification.
 """
 
-from typing import IO, TYPE_CHECKING, Dict, List, Optional, Tuple, Union
+from __future__ import annotations
+
+from typing import IO, TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from rdflib.graph import ConjunctiveGraph, Graph
 from rdflib.plugins.serializers.turtle import TurtleSerializer
@@ -16,6 +18,8 @@ __all__ = ["TrigSerializer"]
 
 
 class TrigSerializer(TurtleSerializer):
+    """TriG RDF graph serializer."""
+
     short_name = "trig"
     indentString = 4 * " "
 
@@ -40,7 +44,8 @@ class TrigSerializer(TurtleSerializer):
             if len(context) == 0:
                 continue
             self.store = context
-            self.getQName(context.identifier)
+            # Don't generate a new prefix for a graph URI if one already exists
+            self.get_pname(context.identifier, False)
             self._subjects = {}
 
             for triple in context:
@@ -64,8 +69,8 @@ class TrigSerializer(TurtleSerializer):
         base: Optional[str] = None,
         encoding: Optional[str] = None,
         spacious: Optional[bool] = None,
-        **args,
-    ):
+        **kwargs: Any,
+    ) -> None:
         self.reset()
         self.stream = stream
         # if base is given here, use that, if not and a base is set for the graph use that
@@ -97,10 +102,10 @@ class TrigSerializer(TurtleSerializer):
                 if isinstance(store.identifier, BNode):
                     iri = store.identifier.n3()
                 else:
-                    iri = self.getQName(store.identifier)
+                    # Show the full graph URI if a prefix for it doesn't already exist
+                    iri = self.get_pname(store.identifier, False)
                     if iri is None:
-                        # type error: "IdentifiedNode" has no attribute "n3"
-                        iri = store.identifier.n3()  # type: ignore[attr-defined]
+                        iri = store.identifier.n3()
                 self.write(self.indent() + "\n%s {" % iri)
 
             self.depth += 1

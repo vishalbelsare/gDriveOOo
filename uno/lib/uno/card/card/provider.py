@@ -4,7 +4,7 @@
 """
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -28,75 +28,136 @@
 """
 
 import uno
-import unohelper
 
-from .book import Book
+from com.sun.star.logging.LogLevel import INFO
+from com.sun.star.logging.LogLevel import SEVERE
 
-from ..dbtool import getDateTimeFromString
+from ..helper import getSqlException
+
+from ..oauth20 import getRequest
+
+from dateutil import parser
+from dateutil import tz
 
 import traceback
 
+class Provider():
+    def __init__(self, ctx, src):
+        self._cls = 'Provider'
+        self._ctx = ctx
+        self._src = src
 
-class Provider(unohelper.Base):
-
-    @property
-    def DateTimeFormat(self):
-        return '%Y-%m-%dT%H:%M:%SZ'
-
+    # Currently only vCardOOo supports multiple address books
     def supportAddressBook(self):
         return False
 
+    # Currently only vCardOOo does not supports group
+    def supportGroup(self):
+        return True
+
     def parseDateTime(self, timestamp):
-        return getDateTimeFromString(timestamp, self.DateTimeFormat)
+        datetime = uno.createUnoStruct('com.sun.star.util.DateTime')
+        try:
+            dt = parser.parse(timestamp)
+        except parser.ParserError:
+            pass
+        else:
+            datetime.Year = dt.year
+            datetime.Month = dt.month
+            datetime.Day = dt.day
+            datetime.Hours = dt.hour
+            datetime.Minutes = dt.minute
+            datetime.Seconds = dt.second
+            datetime.NanoSeconds = dt.microsecond * 1000
+            datetime.IsUTC = dt.tzinfo == tz.tzutc()
+        return datetime
+
+    # Method called from User.__init__()
+    # This main method call Request with OAuth2 mode
+    def getRequest(self, url, name):
+        return getRequest(self._ctx, url, name)
+
+
+    # Method called from User.__init__()
+    def insertUser(self, database, request, scheme, server, name, pwd):
+        userid = self.getNewUserId(request, scheme, server, name, pwd)
+        return database.insertUser(userid, scheme, server, '', name)
 
     # Need to be implemented method
-    def insertUser(self, database, request, scheme, server, name, pwd):
+    def getNewUserId(self, request, scheme, server, name, pwd):
         raise NotImplementedError
 
+    # Method called from DataSource.getConnection()
     def initAddressbooks(self, database, user):
+        books = self.getAddressbooks(database, user)
+        self._initUserBooks(database, user, books)
+
+    def getAddressbooks(self, database, user):
         raise NotImplementedError
 
-    def initUserBooks(self, database, user, books):
+    def _initUserBooks(self, database, user, books):
         count = 0
         modified = False
         for uri, name, tag, token in books:
-            print("Provider.initUserBooks() 1 Name: %s - Uri: %s - Tag: %s - Token: %s" % (name, uri, tag, token))
-            if user.Books.hasBook(uri):
-                book = user.Books.getBook(uri)
-                if book.hasNameChanged(name):
+            if user.hasBook(uri):
+                book = user.getBook(uri)
+                if book.isRenamed(name):
                     database.updateAddressbookName(book.Id, name)
                     book.setName(name)
                     modified = True
-                    print("Provider.initUserBooks() 2 %s" % (name, ))
             else:
-                newid = database.insertBook(user.Id, uri, name, tag, token)
-                book = Book(self._ctx, True, Book=newid, Uri=uri, Name=name, Tag=tag, Token=token)
-                user.Books.setBook(uri, book)
+                args = database.insertBook(user.Id, uri, name, tag, token)
+                book = user.setNewBook(uri, **args)
                 modified = True
-                print("Provider.initUserBooks() 3 %s - %s - %s" % (book.Id, name, uri))
             self.initUserGroups(database, user, book)
             count += 1
-        print("Provider.initUserBooks() 4")
         if not count:
-            #TODO: Raise SqlException with correct message!
-            print("Provider.initUserBooks() 1 %s" % (books, ))
-            #raise getSqlException(self._ctx, self, 1004, 1108, 'initUserBooks', '%s has no support of CardDAV!' % user.Server)
+            raise getSqlException(self._ctx, self._src, 1006, 1611, self._cls, 'initUserBooks', user.Name, user.Server)
         if modified and self.supportAddressBook():
             database.initAddressbooks(user)
 
     def initUserGroups(self, database, user, book):
+        groups = self.getUserGroups(database, user, book)
+        self._initUserGroup(database, user, book, groups)
+
+    def _initUserGroup(self, database, user, book, groups):
+        for uri, name in groups:
+            if book.hasGroup(uri):
+                group = book.getGroup(uri)
+                if group.isRenamed(name):
+                    database.updateGroupName(book.Id, group.Id, name)
+                    database.renameGroupView(name, group.Name)
+                    group.setName(name)
+            else:
+                args = database.insertGroup(book.Id, uri, name)
+                group = book.setNewGroup(uri, *args)
+                database.createGroupView(user, group)
+
+    def firstPullCard(self, database, user, book, pages, count):
         raise NotImplementedError
 
-    def firstPullCard(self, database, user, addressbook, pages, count):
-        raise NotImplementedError
-
-    def pullCard(self, database, user, addressbook, pages, count):
+    def pullCard(self, database, user, book, pages, count):
         raise NotImplementedError
 
     def parseCard(self, database):
         raise NotImplementedError
 
+    def raiseForStatus(self, mtd, response, user):
+        name = response.Parameter.Name
+        url = response.Parameter.Url
+        status = response.StatusCode
+        msg = response.Text
+        response.close()
+        raise getSqlException(self._ctx, self._src, 1006, 1601, self._cls, mtd,
+                              name, status, user, url, msg)
+
+    def getLoggerArgs(self, response, mtd, parameter, user):
+        status = response.StatusCode
+        msg = response.Text
+        response.close()
+        return ['Provider', mtd, 201, parameter.Name, status, user, parameter.Url, msg]
+
     # Can be overwritten method
-    def syncGroups(self, database, user, addressbook, pages, count):
-        pass
+    def syncGroups(self, database, user, book, pages, count):
+        return pages, count, None
 

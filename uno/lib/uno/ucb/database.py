@@ -4,7 +4,7 @@
 """
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -28,7 +28,6 @@
 """
 
 import uno
-import unohelper
 
 from com.sun.star.logging.LogLevel import INFO
 from com.sun.star.logging.LogLevel import SEVERE
@@ -37,123 +36,62 @@ from com.sun.star.sdb.CommandType import QUERY
 
 from com.sun.star.sdbc.DataType import VARCHAR
 
-from io.github.prrvchr.css.util import DateTimeWithTimezone
-
 from .dbtool import Array
 
-from .unotool import checkVersion
-from .unotool import getSimpleFile
+from .unotool import generateUuid
 
 from .dbqueries import getSqlQuery
 
-from .dbtool import createStaticTable
+from .dbtool import createUser
 from .dbtool import currentDateTimeInTZ
 from .dbtool import currentUnoDateTime
-from .dbtool import executeSqlQueries
 from .dbtool import getDataSourceCall
 from .dbtool import getDataSourceConnection
 from .dbtool import getDataFromResult
-from .dbtool import executeQueries
 
-from .dbinit import getStaticTables
-from .dbinit import getQueries
-from .dbinit import getTablesAndStatements
+from .logger import getLogger
 
 from .dbconfig import g_role
-from .dbconfig import g_dba
-from .dbconfig import g_csv
-from .dbconfig import g_version
 
-from .configuration import g_admin
+from .configuration import g_defaultlog
 
+import os
 import traceback
 
 
 class DataBase():
-    def __init__(self, ctx, logger, url, sync=None, user='', pwd=''):
+    def __init__(self, ctx, url, user='', pwd=''):
         self._ctx = ctx
-        self._logger = logger
         self._url = url
-        self._sync = sync
-        odb = url + '.odb'
-        new = not getSimpleFile(ctx).exists(odb)
-        connection = getDataSourceConnection(ctx, url, user, pwd, new)
-        self._version = connection.getMetaData().getDriverVersion()
-        if new and self.isUptoDate():
-            self._createDataBase(connection, odb)
+        connection = getDataSourceConnection(ctx, url, user, pwd)
         self._statement = connection.createStatement()
-        self._logger.logprb(INFO, 'DataBase', '__init__()', 401)
 
     @property
     def Url(self):
         return self._url
-    @property
-    def Version(self):
-        return self._version
 
     @property
     def Connection(self):
         return self._statement.getConnection()
 
-    def isUptoDate(self):
-        return checkVersion(self._version, g_version)
-
 # Procedures called by the DataSource
-    def _createDataBase(self, connection, odb):
-        self._logger.logprb(INFO, 'DataBase', '_createDataBase()', 411, self._version)
-        statement = connection.createStatement()
-        createStaticTable(self._ctx, statement, getStaticTables(), g_csv, True)
-        tables, statements = getTablesAndStatements(self._ctx, statement, self._version)
-        executeSqlQueries(statement, tables)
-        executeQueries(self._ctx, statement, getQueries())
-        statement.close()
-        connection.getParent().DatabaseDocument.storeAsURL(odb, ())
-        self._logger.logprb(INFO, 'DataBase', '_createDataBase()', 412)
-
-    def getDataSource(self):
-        return self.Connection.getParent().DatabaseDocument.DataSource
-
-    def storeDataBase(self, url):
-        self.Connection.getParent().DatabaseDocument.storeAsURL(url, ())
-
     def addCloseListener(self, listener):
-        self.Connection.Parent.DatabaseDocument.addCloseListener(listener)
+        self.Connection.getParent().DatabaseDocument.addCloseListener(listener)
 
     def shutdownDataBase(self, compact=False):
         if compact:
             query = getSqlQuery(self._ctx, 'shutdownCompact')
-        else:
-            query = getSqlQuery(self._ctx, 'shutdown')
-        self._statement.execute(query)
+            self._statement.execute(query)
+        #else:
+        #    query = getSqlQuery(self._ctx, 'shutdown')
+        #self._statement.execute(query)
+        self.dispose()
+
+    def dispose(self):
+        self._statement.close()
 
     def createUser(self, name, password):
-        format = {'User': name, 'Password': password, 'Role': g_role, 'Admin': g_admin}
-        sql = getSqlQuery(self._ctx, 'createUser', format)
-        status = self._statement.executeUpdate(sql)
-        sql = getSqlQuery(self._ctx, 'grantRole', format)
-        status += self._statement.executeUpdate(sql)
-        return status == 0
-
-    def createSharedFolder(self, user, itemid, folder, mediatype, datetime, timestamp):
-        call = self._getCall('insertSharedFolder')
-        call.setString(1, user.Id)
-        call.setString(2, user.RootId)
-        call.setLong(3, 0)
-        call.setObject(4, datetime)
-        call.setString(5, itemid)
-        call.setString(6, folder)
-        call.setTimestamp(7, timestamp)
-        call.setTimestamp(8, timestamp)
-        call.setString(9, mediatype)
-        call.setLong(10, 0)
-        call.setNull(11, VARCHAR)
-        call.setBoolean(12, False)
-        call.setBoolean(13, False)
-        call.setBoolean(14, False)
-        call.setBoolean(15, False)
-        call.setBoolean(16, False)
-        call.executeUpdate()
-        call.close()
+        return createUser(self.Connection, name, password, g_role)
 
     def selectUser(self, name):
         user = None
@@ -166,31 +104,19 @@ class DataBase():
         select.close()
         return user
 
-    def getDefaultUserTimeStamp(self):
-        dtz = DateTimeWithTimezone()
-        dtz.DateTimeInTZ.Year = 1970
-        dtz.DateTimeInTZ.Month = 1
-        dtz.DateTimeInTZ.Day = 1
-        return dtz
-
-    def insertUser(self, user, root):
+    def insertUser(self, user):
         data = None
+        shareid = generateUuid()
         timestamp = currentDateTimeInTZ()
         call = self._getCall('insertUser')
-        call.setString(1, user[0])
-        call.setString(2, user[1])
-        call.setString(3, user[2])
-        call.setString(4, root[0])
-        call.setString(5, root[1])
-        call.setTimestamp(6, root[2])
-        call.setTimestamp(7, root[3])
-        call.setString(8, root[4])
-        call.setBoolean(9, root[5])
-        call.setBoolean(10, root[6])
-        call.setBoolean(11, root[7])
-        call.setBoolean(12, root[8])
-        call.setBoolean(13, root[9])
-        call.setObject(14, timestamp)
+        call.setString(1, user.get('Id'))
+        call.setString(2, user.get('Name'))
+        call.setString(3, user.get('DisplayName'))
+        call.setString(4, user.get('RootId'))
+        call.setString(5, shareid)
+        call.setTimestamp(6, user.get('DateCreated'))
+        call.setTimestamp(7, user.get('DateModified'))
+        call.setObject(8, timestamp)
         result = call.executeQuery() 
         if result.next():
             data = getDataFromResult(result)
@@ -198,90 +124,87 @@ class DataBase():
         call.close()
         return data
 
-    def getContentType(self):
-        call = self._getCall('getContentType')
-        result = call.executeQuery()
-        if result.next():
-            folder = result.getString(1)
-            link = result.getString(2)
-        result.close()
-        call.close()
-        return folder, link
-
 # Procedures called by the Replicator
-    def getMetaData(self, user, item):
-        itemid = item.get('Id')
-        metadata = self.getItem(user, itemid, False)
-        atroot = metadata.get('ParentId') == user.RootId
-        metadata['AtRoot'] = atroot
-        return metadata
+    # XXX: Replicator uses its own database connection
+    def getMetaData(self, userid, rootid, itemid):
+        if itemid == rootid:
+            data = user.getRootMetaData()
+        else:
+            data = self.getItem(userid, itemid, False)
+        data['AtRoot'] = data.get('ParentId') == rootid
+        return data
 
-    def updateNewItemId(self, oldid, newid, created, modified):
-        print("DataBase.mergeNewFolder() 1 Item Id: %s - New Item Id: %s" % (oldid, newid))
+    def updateNewItemId(self, userid, oldid, newid, created, modified):
         call = self._getCall('updateNewItemId')
-        call.setString(1, oldid)
-        call.setString(2, newid)
-        call.setTimestamp(3, created)
-        call.setTimestamp(4, modified)
+        call.setString(1, userid)
+        call.setString(2, oldid)
+        call.setString(3, newid)
+        call.setTimestamp(4, created)
+        call.setTimestamp(5, modified)
+        call.executeUpdate()
         call.close()
         return newid
 
 # Procedures called by the Content
-        #TODO: Can't have a simple SELECT ResultSet with a Procedure,
-    def getItem(self, user, itemid, rewrite=True):
+    def getItem(self, userid, uri, ispath=True):
         item = None
-        isroot = itemid == user.RootId
-        print("Content.getItem() 1 isroot: '%s'" % isroot)
-        call = 'getRoot' if isroot else 'getItem'
-        select = self._getCall(call)
-        select.setString(1, user.Id if isroot else itemid)
-        if not isroot:
-             select.setBoolean(2, rewrite)
-        result = select.executeQuery()
+        call = self._getCall('getItem')
+        call.setString(1, userid)
+        call.setString(2, uri)
+        call.setBoolean(3, ispath)
+        result = call.executeQuery()
         if result.next():
-            print("Content.getItem() 2 isroot: '%s'" % isroot)
             item = getDataFromResult(result)
         result.close()
-        select.close()
+        call.close()
         return item
 
-    def getChildren(self, username, itemid, properties, mode, scheme):
+    def getChildren(self, userid, scheme, path, properties, mode):
         #TODO: Can't have a ResultSet of type SCROLL_INSENSITIVE with a Procedure,
         #TODO: as a workaround we use a simple quey...
-        select = self._getCall('getChildren', properties)
+        call = self._getCall('getChildren', self._getChildrenformat(properties))
         scroll = uno.getConstantByName('com.sun.star.sdbc.ResultSetType.SCROLL_INSENSITIVE')
-        select.ResultSetType = scroll
+        call.ResultSetType = scroll
         # OpenOffice / LibreOffice Columns:
         #    ['Title', 'Size', 'DateModified', 'DateCreated', 'IsFolder', 'TargetURL', 'IsHidden',
         #    'IsVolume', 'IsRemote', 'IsRemoveable', 'IsFloppy', 'IsCompactDisc']
-        # "TargetURL" is done by: the database view Path
+        # "TargetURL" is done by: the given scheme + the database view Path + Title
         i = 1
         if 'TargetURL' in (property.Name for property in properties):
-            select.setString(i, scheme)
+            call.setString(i, scheme)
             i += 1
-        select.setShort(i , mode)
-        select.setString(i +1, itemid)
-        return select
+        call.setString(i, userid)
+        call.setString(i + 1, path)
+        call.setShort(i + 2, mode + 1)
+        return call
 
-    def updateConnectionMode(self, userid, itemid, value, default):
+    def _getChildrenformat(self, properties):
+        return {'Children': 'PUBLIC.PUBLIC."Children"',
+                'Columns': ', '.join(self._getChildrenColumns(properties))}
+
+    def _getChildrenColumns(self, properties):
+        columns = {'Title':         'C."Title"',
+                   'Size':          'C."Size"',
+                   'DateModified':  'C."DateModified"',
+                   'DateCreated':   'C."DateCreated"',
+                   'IsFolder':      'C."IsFolder"',
+                   'TargetURL':     '? || C."Path" || C."Title"',
+                   'IsHidden':      'FALSE',
+                   'IsVolume':      'FALSE',
+                   'IsRemote':      'C."ConnectionMode" < 0',
+                   'IsRemoveable':  'FALSE',
+                   'IsFloppy':      'FALSE',
+                   'IsCompactDisc': 'FALSE'}
+        return ('%s AS "%s"' % (columns[p.Name], p.Name) for p in properties if p.Name in columns)
+
+    def updateConnectionMode(self, userid, itemid, value):
         update = self._getCall('updateConnectionMode')
-        update.setLong(1, value)
-        update.setString(2, itemid)
+        update.setShort(1, value)
+        update.setString(2, userid)
+        update.setString(3, itemid)
         update.executeUpdate()
         update.close()
         return value
-
-    def getIdentifier(self, user, url):
-        print("DataBase.getIdentifier() Url: '%s'" % url)
-        call = self._getCall('getIdentifier')
-        call.setString(1, user.Id)
-        call.setString(2, url)
-        call.execute()
-        itemid = call.getString(3)
-        if call.wasNull():
-            itemid = None
-        call.close()
-        return itemid
 
     def getNewIdentifier(self, userid):
         identifier = ''
@@ -295,7 +218,6 @@ class DataBase():
         return identifier
 
     def deleteNewIdentifier(self, userid, itemid):
-        print("DataBase.deleteNewIdentifier() NewID: %s" % itemid)
         call = self._getCall('deleteNewIdentifier')
         call.setString(1, userid)
         call.setString(2, itemid)
@@ -303,71 +225,65 @@ class DataBase():
         call.close()
 
     def updateContent(self, userid, itemid, property, value):
-        updated = False
+        updated = clear = False
         timestamp = currentDateTimeInTZ()
-        if property == 'Title':
-            update = self._getCall('updateTitle')
+        if property == 'Name':
+            update = self._getCall('updateName')
             update.setObject(1, timestamp)
             update.setString(2, value)
-            update.setString(3, itemid)
+            update.setString(3, userid)
+            update.setString(4, itemid)
             updated = update.execute() == 0
             update.close()
+            clear = True
         elif property == 'Size':
             update = self._getCall('updateSize')
             # FIXME: If we update the Size, we need to update the DateModified too...
             update.setObject(1, timestamp)
             update.setLong(2, value)
             update.setTimestamp(3, currentUnoDateTime())
-            update.setString(4, itemid)
+            update.setString(4, userid)
+            update.setString(5, itemid)
             updated = update.execute() == 0
             update.close()
         elif property == 'Trashed':
             update = self._getCall('updateTrashed')
             update.setObject(1, timestamp)
             update.setBoolean(2, value)
-            update.setString(3, itemid)
+            update.setString(3, userid)
+            update.setString(4, itemid)
             updated = update.execute() == 0
             update.close()
-        if updated and self._sync:
-            # Start Replicator for pushing changes…
-            self._sync.set()
+        return updated, clear
 
-    def getNewTitle(self, title, parentid, isfolder):
-        call = self._getCall('getNewTitle')
-        call.setString(1, title)
-        call.setString(2, parentid)
-        call.setBoolean(3, isfolder)
-        call.execute()
-        newtitle = call.getString(4)
-        call.close()
-        return newtitle
-
-    def insertNewContent(self, userid, content, timestamp):
+    def insertNewContent(self, userid, item, timestamp):
+        inserted = False
         call = self._getCall('insertItem')
         call.setString(1, userid)
         call.setLong(2, 1)
         call.setObject(3, timestamp)
-        call.setString(4, content.get("Id"))
-        call.setString(5, content.get("Title"))
-        call.setTimestamp(6, content.get('DateCreated'))
-        call.setTimestamp(7, content.get('DateModified'))
-        call.setString(8, content.get('MediaType'))
-        call.setLong(9, content.get('Size'))
-        self._setStringValue(call, 10, content.get('Link'))
-        call.setBoolean(11, content.get('Trashed'))
-        call.setBoolean(12, content.get('CanAddChild'))
-        call.setBoolean(13, content.get('CanRename'))
-        call.setBoolean(14, content.get('IsReadOnly'))
-        call.setBoolean(15, content.get('IsVersionable'))
-        call.setString(16, content.get("ParentId"))
-        status = call.execute() == 0
-        content['BaseURI'] = call.getString(17)
-        content['Title'] = call.getString(18)
-        content['TitleOnServer'] = call.getString(19)
+        call.setString(4, item.get("Id"))
+        call.setString(5, item.get("Name"))
+        call.setTimestamp(6, item.get('DateCreated'))
+        call.setTimestamp(7, item.get('DateModified'))
+        call.setString(8, item.get('MediaType'))
+        call.setLong(9, item.get('Size'))
+        call.setString(10, item.get('Link'))
+        call.setBoolean(11, item.get('Trashed'))
+        call.setBoolean(12, item.get('CanAddChild'))
+        call.setBoolean(13, item.get('CanRename'))
+        call.setBoolean(14, item.get('IsReadOnly'))
+        call.setBoolean(15, item.get('IsVersionable'))
+        call.setString(16, item.get("ParentId"))
+        result = call.executeQuery()
+        if result.next():
+            item['Name'] = result.getString(1)
+            item['Title'] = result.getString(2)
+            item['Path'] = result.getString(3)
+            inserted = True
+        result.close()
         call.close()
-        if status and self._sync:
-            # Start Replicator for pushing changes…
-            self._sync.set()
+        return inserted
 
     def hasTitle(self, userid, parentid, title):
         has = True
@@ -382,17 +298,18 @@ class DataBase():
         call.close()
         return has
 
-    def getChildId(self, parentid, title):
-        id = None
+    def getChildId(self, parentid, path, title):
+        itemid = None
         call = self._getCall('getChildId')
         call.setString(1, parentid)
-        call.setString(2, title)
+        call.setString(2, path)
+        call.setString(3, title)
         result = call.executeQuery()
         if result.next():
-            id = result.getString(1)
+            itemid = result.getString(1)
         result.close()
         call.close()
-        return id
+        return itemid
 
 # Procedures called by the Replicator
     # Synchronization pull token update procedure
@@ -400,9 +317,15 @@ class DataBase():
         update = self._getCall('updateToken')
         update.setString(1, token)
         update.setString(2, userid)
-        updated = update.executeUpdate() == 1
+        update.executeUpdate()
         update.close()
-        return updated
+
+    def updateTimeStamp(self, userid, timestamp):
+        update = self._getCall('updateTimeStamp')
+        update.setObject(1, timestamp)
+        update.setString(2, userid)
+        update.executeUpdate()
+        update.close()
 
     # Identifier counting procedure
     def countIdentifier(self, userid):
@@ -428,51 +351,26 @@ class DataBase():
         if count > 0:
             call.executeBatch()
         call.close()
-
-    # Pull procedure
-    def pullItems(self, iterator, userid, timestamp, mode=1):
-        count = 0
-        call1 = self._getCall('mergeItem')
-        call2 = self._getCall('mergeParent')
-        call1.setString(1, userid)
-        call1.setInt(2, mode)
-        call1.setObject(3, timestamp)
-        for item in iterator:
-            count += self._mergeItem(call1, call2, item, timestamp)
-        if count:
-            call1.executeBatch()
-            call2.executeBatch()
-        call1.close()
-        call2.close()
         return count
 
-    def pullChanges(self, iterator, userid, timestamp):
-        call = self._getCall('pullChanges')
+    # Pull procedure
+    def mergeItem(self, userid, parentid, datetime, item, mode=1):
+        call = self._getMergeItemCall(userid, parentid, datetime, mode)
+        if self._mergeItem(call, item):
+            call.executeUpdate()
+        call.close()
+        return 1
+
+    def mergeItems(self, userid, parentid, datetime, items, mode=1):
         count = 0
-        for item in iterator:
-            call.setString(1, userid)
-            call.setString(2, item[0])
-            call.setBoolean(3, item[1])
-            call.setNull(4, VARCHAR) if item[2] is None else call.setString(4, item[2])
-            call.setTimestamp(5, item[3])
-            call.setObject(6, timestamp)
+        call = self._getMergeItemCall(userid, parentid, datetime, mode)
+        for item in items:
+            count += self._mergeItem(call, item)
             call.addBatch()
-            count += 1
+            yield item
         if count:
             call.executeBatch()
         call.close()
-        return count
-
-    def updateUserSyncMode(self, userid, mode):
-        update = self._getCall('updateUserSyncMode')
-        update.setInt(1, mode)
-        update.setString(2, userid)
-        update.executeUpdate()
-        update.close()
-
-    def setSession(self, user=g_dba):
-        query = getSqlQuery(self._ctx, 'setSession', user)
-        self._statement.execute(query)
 
     # Procedure to retrieve all the UPDATE AND INSERT in the 'Capabilities' table
     def getPushItems(self, userid, start, end):
@@ -500,14 +398,16 @@ class DataBase():
         select.close()
         return properties
 
-    def updatePushItems(self, user, itemids):
+    def updatePushItems(self, userid, itemids):
         call = self._getCall('updatePushItems')
-        call.setString(1, user.Id)
+        call.setString(1, userid)
         call.setArray(2, Array('VARCHAR', itemids))
         call.execute()
         timestamp = call.getObject(3, None)
+        if call.wasNull():
+            timestamp = None
         call.close()
-        user.TimeStamp = timestamp
+        return timestamp
 
     def getItemParentIds(self, itemid, metadata, start, end):
         call = self._getCall('getItemParentIds')
@@ -521,41 +421,47 @@ class DataBase():
         metadata.insertValue('ParentToAdd', set(new) - set(old))
         metadata.insertValue('ParentToRemove', set(old) - set(new))
 
-    def updateItemId(self, newid, oldid):
+    def updateItemId(self, userid, newid, oldid):
         print("DataBase.updateItemId () NewId: %s - OldId: %s" % (newid, oldid))
         update = self._getCall('updateItemId')
         update.setString(1, newid)
-        update.setString(2, oldid)
+        update.setString(2, userid)
+        update.setString(3, oldid)
         update.executeUpdate()
         update.close()
 
 # Procedures called internally
-    def _mergeItem(self, call1, call2, item, timestamp):
-        call1.setString(4, item[0])
-        call1.setString(5, item[1])
-        call1.setTimestamp(6, item[2])
-        call1.setTimestamp(7, item[3])
-        call1.setString(8, item[4])
-        call1.setLong(9, item[5])
-        self._setStringValue(call1, 10, item[6])
-        call1.setBoolean(11, item[7])
-        call1.setBoolean(12, item[8])
-        call1.setBoolean(13, item[9])
-        call1.setBoolean(14, item[10])
-        call1.setBoolean(15, item[11])
-        call1.addBatch()
-        self._mergeParent(call2, item, timestamp)
+    def _getMergeItemCall(self, userid, parentid, datetime, mode):
+        call = self._getCall('mergeItem')
+        call.setString(1, userid)
+        call.setString(2, parentid)
+        call.setObject(3, datetime)
+        call.setInt(4, mode)
+        return call
+
+    def _mergeItem(self, call, item):
+        call.setString(5, item.get('Id'))
+        call.setString(6, item.get('Name'))
+        call.setTimestamp(7, item.get('DateCreated'))
+        call.setTimestamp(8, item.get('DateModified'))
+        call.setString(9, item.get('MediaType'))
+        size = item.get('Size')
+        if os.name == 'nt':
+            mx = 2 ** 32 / 2 -1
+            if size > mx:
+                size = min(size, mx)
+                getLogger(self._ctx, g_defaultlog).logprb(SEVERE, 'DataBase', '_mergeItem', 401, os.name, item.get('Size'), size)
+        call.setLong(10, size)
+        call.setString(11, item.get('Link'))
+        call.setBoolean(12, item.get('Trashed'))
+        call.setBoolean(13, item.get('CanAddChild'))
+        call.setBoolean(14, item.get('CanRename'))
+        call.setBoolean(15, item.get('IsReadOnly'))
+        call.setBoolean(16, item.get('IsVersionable'))
+        call.setArray(17, Array('VARCHAR', item.get('Parents')))
+        path = item.get('Path')
+        call.setNull(18, VARCHAR) if path is None else call.setString(18, path)
         return 1
-
-    def _mergeParent(self, call, item, timestamp):
-        call.setString(1, item[0])
-        self._setStringValue(call, 2, item[-2])
-        call.setArray(3, Array('VARCHAR', item[-1]))
-        call.setObject(4, timestamp)
-        call.addBatch()
-
-    def _setStringValue(self, call, i, value):
-        call.setNull(i, VARCHAR) if value is None else call.setString(i, value)
 
     def _getCall(self, name, format=None):
         return getDataSourceCall(self._ctx, self.Connection, name, format)
@@ -566,3 +472,4 @@ class DataBase():
         #query = self.Connection.getQueries().getByName(name).Command
         #self._CallsPool[name] = self.Connection.prepareCall(query)
         return self.Connection.prepareCommand(name, QUERY)
+

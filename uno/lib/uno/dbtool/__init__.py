@@ -4,7 +4,7 @@
 """
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -27,19 +27,34 @@
 ╚════════════════════════════════════════════════════════════════════════════════════╝
 """
 
+
+from .array import Array
+
+from .dbcheck import DBCheck
+
+from .dbtool import checkConnection
 from .dbtool import checkDataBase
 from .dbtool import createDataSource
-from .dbtool import createStaticTable
+from .dbtool import createTables
+from .dbtool import createIndexes
+from .dbtool import createForeignKeys
+from .dbtool import createRoleAndPrivileges
+from .dbtool import createUser
+from .dbtool import createViews
 from .dbtool import currentDateTime
 from .dbtool import currentDateTimeInTZ
 from .dbtool import currentUnoDateTime
 from .dbtool import executeQueries
 from .dbtool import executeSqlQueries
 from .dbtool import getConnectionInfo
+from .dbtool import getConnectionInfos
 from .dbtool import getConnectionUrl
 from .dbtool import getDataBaseConnection
 from .dbtool import getDataBaseInfo
 from .dbtool import getDataBaseUrl
+from .dbtool import getDataBaseTables
+from .dbtool import getDataBaseIndexes
+from .dbtool import getDataBaseForeignKeys
 from .dbtool import getDataFromResult
 from .dbtool import getDataSource
 from .dbtool import getDataSourceCall
@@ -50,7 +65,10 @@ from .dbtool import getDataSourceInfo
 from .dbtool import getDataSourceJavaInfo
 from .dbtool import getDateTimeInTZToString
 from .dbtool import getDateTimeFromString
+from .dbtool import getDateTimeToString
 from .dbtool import getDictFromResult
+from .dbtool import getDictSequenceFromResult
+from .dbtool import getDriverInfos
 from .dbtool import getDriverPropertyInfo
 from .dbtool import getDriverPropertyInfos
 from .dbtool import getObjectFromResult
@@ -60,10 +78,18 @@ from .dbtool import getRowDict
 from .dbtool import getRowValue
 from .dbtool import getSequenceFromResult
 from .dbtool import getSqlException
-from .dbtool import getDateTimeToString
+from .dbtool import getTablePrivileges
 from .dbtool import getUnoType
 from .dbtool import getValueFromResult
 from .dbtool import registerDataSource
 from .dbtool import toUnoDateTime
 
-from .array import Array
+from .dbinit import createStaticTables
+from .dbinit import createStaticIndexes
+from .dbinit import createStaticForeignKeys
+from .dbinit import setStaticTable
+from .dbinit import getTableNames
+from .dbinit import getTables
+from .dbinit import getIndexes
+from .dbinit import getForeignKeys
+from .dbinit import getPrivileges

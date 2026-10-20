@@ -1,3 +1,4 @@
+
 # Terms Of Use
 
 **Ce [document][1] en français.**
@@ -5,7 +6,7 @@
 **Use of this software also subjects you to our [Data Protection Policy][2]**.
 
 Regarding installation, configuration and use,
-please consult the **[documentation][3]**.
+please consult the **[Documentation][3]**.
 
 ## Introduction:
 

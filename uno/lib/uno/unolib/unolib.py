@@ -4,7 +4,7 @@
 """
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -30,6 +30,9 @@
 import uno
 import unohelper
 
+from com.sun.star.logging.LogLevel import INFO
+from com.sun.star.logging.LogLevel import SEVERE
+
 from com.sun.star.beans import XPropertySet
 from com.sun.star.beans import XPropertySetInfo
 from com.sun.star.beans import XPropertiesChangeNotifier
@@ -40,23 +43,26 @@ from com.sun.star.lang import XInitialization
 
 class PropertySetInfo(unohelper.Base,
                       XPropertySetInfo):
-    def __init__(self, properties=None):
+    def __init__(self, properties=None, logger=None):
         if properties is None:
-            self.properties = {}
-        else:
-            self.properties = properties
+            properties = {}
+        self.properties = properties
+        self._logger = logger
 
     # XPropertySetInfo
     def getProperties(self):
         return tuple(self.properties.values())
     def getPropertyByName(self, name):
-        print("PropertySetInfo.getPropertyByName() %s" % name)
+        if self._logger is not None:
+            self._logger.logprb(INFO, 'PropertySetInfo', 'getPropertyByName', 711, name)
         if name in self.properties:
             return self.properties[name]
         raise UnknownPropertyException("UnknownPropertyException", None)
     def hasPropertyByName(self, name):
-        print("PropertySetInfo.hasPropertyByName() %s" % name)
-        return name in self.properties
+        has = name in self.properties
+        if self._logger is not None:
+            self._logger.logprb(INFO, 'PropertySetInfo', 'hasPropertyByName', 721, name, has)
+        return has
 
 
 class PropertySet(XPropertySet):

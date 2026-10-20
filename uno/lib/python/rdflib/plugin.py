@@ -1,31 +1,31 @@
-"""
-Plugin support for rdf.
+"""Plugin support for rdf.
 
 There are a number of plugin points for rdf: parser, serializer,
 store, query processor, and query result. Plugins can be registered
 either through setuptools entry_points or by calling
 rdf.plugin.register directly.
 
-If you have a package that uses a setuptools based setup.py you can add the
-following to your setup::
+If you have a package that uses a setuptools based `setup.py` you can add the
+following to your setup:
 
-    entry_points = {
-        'rdf.plugins.parser': [
-            'nt =     rdf.plugins.parsers.ntriples:NTParser',
-            ],
-        'rdf.plugins.serializer': [
-            'nt =     rdf.plugins.serializers.NTSerializer:NTSerializer',
-            ],
-        }
+```python
+entry_points = {
+    'rdf.plugins.parser': [
+        'nt =     rdf.plugins.parsers.ntriples:NTParser',
+        ],
+    'rdf.plugins.serializer': [
+        'nt =     rdf.plugins.serializers.NTSerializer:NTSerializer',
+        ],
+    }
+```
 
-See the `setuptools dynamic discovery of services and plugins`__ for more
-information.
-
-.. __: http://peak.telecommunity.com/DevCenter/setuptools#dynamic-discovery-of-services-and-plugins
-
+See the [setuptools dynamic discovery of services and plugins](http://peak.telecommunity.com/DevCenter/setuptools#dynamic-discovery-of-services-and-plugins)
+for moreinformation.
 """
 
-import sys
+from __future__ import annotations
+
+from importlib.metadata import EntryPoint, entry_points
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -52,11 +52,6 @@ from rdflib.query import (
 from rdflib.serializer import Serializer
 from rdflib.store import Store
 
-if sys.version_info < (3, 8):
-    from importlib_metadata import EntryPoint, entry_points
-else:
-    from importlib.metadata import EntryPoint, entry_points
-
 __all__ = [
     "register",
     "get",
@@ -78,10 +73,10 @@ rdflib_entry_points = {
     "rdf.plugins.updateprocessor": UpdateProcessor,
 }
 
-_plugins: Dict[Tuple[str, Type[Any]], "Plugin"] = {}
+_plugins: Dict[Tuple[str, Type[Any]], Plugin] = {}
 
 
-class PluginException(Error):
+class PluginException(Error):  # noqa: N818
     pass
 
 
@@ -107,7 +102,7 @@ class Plugin(Generic[PluginT]):
 
 
 class PKGPlugin(Plugin[PluginT]):
-    def __init__(self, name: str, kind: Type[PluginT], ep: "EntryPoint"):
+    def __init__(self, name: str, kind: Type[PluginT], ep: EntryPoint):
         self.name = name
         self.kind = kind
         self.ep = ep
@@ -157,13 +152,11 @@ else:
 @overload
 def plugins(
     name: Optional[str] = ..., kind: Type[PluginT] = ...
-) -> Iterator[Plugin[PluginT]]:
-    ...
+) -> Iterator[Plugin[PluginT]]: ...
 
 
 @overload
-def plugins(name: Optional[str] = ..., kind: None = ...) -> Iterator[Plugin]:
-    ...
+def plugins(name: Optional[str] = ..., kind: None = ...) -> Iterator[Plugin]: ...
 
 
 def plugins(
@@ -368,6 +361,12 @@ register(
     "rdflib.plugins.serializers.hext",
     "HextuplesSerializer",
 )
+register(
+    "patch",
+    Serializer,
+    "rdflib.plugins.serializers.patch",
+    "PatchSerializer",
+)
 
 # Register Triple Parsers
 register(
@@ -493,6 +492,14 @@ register(
     "HextuplesParser",
 )
 
+# Register RDF Patch Parsers
+register(
+    "patch",
+    Parser,
+    "rdflib.plugins.parsers.patch",
+    "RDFPatchParser",
+)
+
 # Register SPARQL Processors
 register(
     "sparql",
@@ -571,18 +578,6 @@ register(
     "XMLResultParser",
 )
 register(
-    "application/sparql-results+xml; charset=UTF-8",
-    ResultParser,
-    "rdflib.plugins.sparql.results.xmlresults",
-    "XMLResultParser",
-)
-register(
-    "application/rdf+xml",
-    ResultParser,
-    "rdflib.plugins.sparql.results.graph",
-    "GraphResultParser",
-)
-register(
     "json",
     ResultParser,
     "rdflib.plugins.sparql.results.jsonresults",
@@ -618,3 +613,14 @@ register(
     "rdflib.plugins.sparql.results.tsvresults",
     "TSVResultParser",
 )
+
+graph_parsers = {parser.name for parser in plugins(kind=Parser)}
+result_parsers = {parser.name for parser in plugins(kind=ResultParser)}
+graph_result_parsers = graph_parsers - result_parsers
+for parser_name in graph_result_parsers:
+    register(
+        parser_name,
+        ResultParser,
+        "rdflib.plugins.sparql.results.graph",
+        "GraphResultParser",
+    )

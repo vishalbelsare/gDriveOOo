@@ -1,12 +1,11 @@
-from __future__ import annotations
-
 """
 This contains evaluation functions for expressions
 
 They get bound as instances-methods to the CompValue objects from parserutils
 using setEvalFn
-
 """
+
+from __future__ import annotations
 
 import datetime as py_datetime  # naming conflict with function within this module
 import hashlib
@@ -21,7 +20,6 @@ from functools import reduce
 from typing import Any, Callable, Dict, NoReturn, Optional, Tuple, Union, overload
 from urllib.parse import quote
 
-import isodate
 from pyparsing import ParseResults
 
 from rdflib.namespace import RDF, XSD
@@ -47,6 +45,7 @@ from rdflib.term import (
     URIRef,
     Variable,
 )
+from rdflib.xsd_datetime import Duration, parse_datetime  # type: ignore[attr-defined]
 
 
 def Builtin_IRI(expr: Expr, ctx: FrozenBindings) -> URIRef:
@@ -481,8 +480,11 @@ def Builtin_TIMEZONE(e: Expr, ctx) -> Literal:
     """
     http://www.w3.org/TR/sparql11-query/#func-timezone
 
-    :returns: the timezone part of arg as an xsd:dayTimeDuration.
-    :raises: an error if there is no timezone.
+    Returns:
+        The timezone part of arg as an xsd:dayTimeDuration.
+
+    Raises:
+        An error if there is no timezone.
     """
     dt = datetime(e.arg)
     if not dt.tzinfo:
@@ -521,8 +523,13 @@ def Builtin_TZ(e: Expr, ctx) -> Literal:
     if not d.tzinfo:
         return Literal("")
     n = d.tzinfo.tzname(d)
-    if n == "UTC":
+    if n is None:
+        n = ""
+    elif n == "UTC":
         n = "Z"
+    elif n.startswith("UTC"):
+        # Replace tzname like "UTC-05:00" with simply "-05:00" to match Jena tz fn
+        n = n[3:]
     return Literal(n)
 
 
@@ -533,8 +540,7 @@ def Builtin_UCASE(e: Expr, ctx) -> Literal:
 
 
 def Builtin_LANG(e: Expr, ctx) -> Literal:
-    """
-    http://www.w3.org/TR/sparql11-query/#func-lang
+    """http://www.w3.org/TR/sparql11-query/#func-lang
 
     Returns the language tag of ltrl, if it has one. It returns "" if ltrl has
     no language tag. Note that the RDF data model does not include literals
@@ -593,8 +599,7 @@ _CUSTOM_FUNCTIONS: Dict[URIRef, Tuple[_CustomFunction, bool]] = {}
 def register_custom_function(
     uri: URIRef, func: _CustomFunction, override: bool = False, raw: bool = False
 ) -> None:
-    """
-    Register a custom SPARQL function.
+    """Register a custom SPARQL function.
 
     By default, the function will be passed the RDF terms in the argument list.
     If raw is True, the function will be passed an Expression and a Context.
@@ -687,7 +692,7 @@ def default_cast(e: Expr, ctx: FrozenBindings) -> Literal:  # type: ignore[retur
         if x.datatype and x.datatype not in (XSD.dateTime, XSD.string):
             raise SPARQLError("Cannot cast %r to XSD:dateTime" % x.datatype)
         try:
-            return Literal(isodate.parse_datetime(x), datatype=e.iri)
+            return Literal(parse_datetime(x), datatype=e.iri)
         except:  # noqa: E722
             raise SPARQLError("Cannot interpret '%r' as datetime" % x)
 
@@ -754,7 +759,7 @@ def MultiplicativeExpression(
         for op, f in zip(e.op, other):
             f = numeric(f)
 
-            if type(f) == float:
+            if type(f) == float:  # noqa: E721
                 res = float(res)
 
             if op == "*":
@@ -988,8 +993,7 @@ def simplify(expr: Any) -> Any:
 
     if isinstance(expr, (list, ParseResults)):
         return list(map(simplify, expr))
-    # type error: Statement is unreachable
-    if not isinstance(expr, CompValue):  # type: ignore[unreachable]
+    if not isinstance(expr, CompValue):
         return expr
     if expr.name.endswith("Expression"):
         if expr.other is None:
@@ -1077,7 +1081,6 @@ def numeric(expr: Literal) -> Any:
 def dateTimeObjects(expr: Literal) -> Any:
     """
     return a dataTime/date/time/duration/dayTimeDuration/yearMonthDuration python objects from a literal
-
     """
     return expr.toPython()
 
@@ -1086,20 +1089,19 @@ def dateTimeObjects(expr: Literal) -> Any:
 def isCompatibleDateTimeDatatype(  # type: ignore[return]
     obj1: Union[py_datetime.date, py_datetime.datetime],
     dt1: URIRef,
-    obj2: Union[isodate.Duration, py_datetime.timedelta],
+    obj2: Union[Duration, py_datetime.timedelta],
     dt2: URIRef,
 ) -> bool:
     """
     Returns a boolean indicating if first object is compatible
     with operation(+/-) over second object.
-
     """
     if dt1 == XSD.date:
         if dt2 == XSD.yearMonthDuration:
             return True
         elif dt2 == XSD.dayTimeDuration or dt2 == XSD.Duration:
             # checking if the dayTimeDuration has no Time Component
-            # else it wont be compatible with Date Literal
+            # else it won't be compatible with Date Literal
             if "T" in str(obj2):
                 return False
             else:
@@ -1111,7 +1113,7 @@ def isCompatibleDateTimeDatatype(  # type: ignore[return]
         elif dt2 == XSD.dayTimeDuration or dt2 == XSD.Duration:
             # checking if the dayTimeDuration has no Date Component
             # (by checking if the format is "PT...." )
-            # else it wont be compatible with Time Literal
+            # else it won't be compatible with Time Literal
             if "T" == str(obj2)[1]:
                 return True
             else:
@@ -1128,7 +1130,6 @@ def calculateDuration(
 ) -> Literal:
     """
     returns the duration Literal between two datetime
-
     """
     date1 = obj1
     date2 = obj2
@@ -1140,7 +1141,7 @@ def calculateDuration(
 def calculateFinalDateTime(
     obj1: Union[py_datetime.date, py_datetime.datetime],
     dt1: URIRef,
-    obj2: Union[isodate.Duration, py_datetime.timedelta],
+    obj2: Union[Duration, py_datetime.timedelta],
     dt2: URIRef,
     operation: str,
 ) -> Literal:
@@ -1164,23 +1165,19 @@ def calculateFinalDateTime(
 
 
 @overload
-def EBV(rt: Literal) -> bool:
-    ...
+def EBV(rt: Literal) -> bool: ...
 
 
 @overload
-def EBV(rt: Union[Variable, IdentifiedNode, SPARQLError, Expr]) -> NoReturn:
-    ...
+def EBV(rt: Union[Variable, IdentifiedNode, SPARQLError, Expr]) -> NoReturn: ...
 
 
 @overload
-def EBV(rt: Union[Identifier, SPARQLError, Expr]) -> Union[bool, NoReturn]:
-    ...
+def EBV(rt: Union[Identifier, SPARQLError, Expr]) -> Union[bool, NoReturn]: ...
 
 
 def EBV(rt: Union[Identifier, SPARQLError, Expr]) -> bool:
-    """
-    Effective Boolean Value (EBV)
+    """Effective Boolean Value (EBV)
 
     * If the argument is a typed literal with a datatype of xsd:boolean,
       the EBV is the value of that argument.
@@ -1191,7 +1188,6 @@ def EBV(rt: Union[Identifier, SPARQLError, Expr]) -> bool:
       derived from a numeric type, the EBV is false if the operand value is
       NaN or is numerically equal to zero; otherwise the EBV is true.
     * All other arguments, including unbound arguments, produce a type error.
-
     """
 
     if isinstance(rt, Literal):
@@ -1225,28 +1221,27 @@ def EBV(rt: Union[Identifier, SPARQLError, Expr]) -> bool:
 def _lang_range_check(range: Literal, lang: Literal) -> bool:
     """
     Implementation of the extended filtering algorithm, as defined in point
-    3.3.2, of U{RFC 4647<http://www.rfc-editor.org/rfc/rfc4647.txt>}, on
+    3.3.2, of [RFC 4647](http://www.rfc-editor.org/rfc/rfc4647.txt), on
     matching language ranges and language tags.
-    Needed to handle the C{rdf:PlainLiteral} datatype.
-    @param range: language range
-    @param lang: language tag
-    @rtype: boolean
+    Needed to handle the `rdf:PlainLiteral` datatype.
 
-        @author: U{Ivan Herman<a href="http://www.w3.org/People/Ivan/">}
+    Args:
+        range: language range
+        lang: language tag
 
-        Taken from `RDFClosure/RestrictedDatatype.py`__
+    Author: [Ivan Herman](http://www.w3.org/People/Ivan/)
 
-    .. __:http://dev.w3.org/2004/PythonLib-IH/RDFClosure/RestrictedDatatype.py
-
+    Taken from [`RDFClosure/RestrictedDatatype.py`](http://dev.w3.org/2004/PythonLib-IH/RDFClosure/RestrictedDatatype.py)
     """
 
     def _match(r: str, l_: str) -> bool:
         """
         Matching of a range and language item: either range is a wildcard
         or the two are equal
-        @param r: language range item
-        @param l_: language tag item
-        @rtype: boolean
+
+        Args:
+            r: language range item
+            l_: language tag item
         """
         return r == "*" or r == l_
 

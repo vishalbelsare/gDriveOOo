@@ -4,7 +4,7 @@
 """
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -27,128 +27,50 @@
 ╚════════════════════════════════════════════════════════════════════════════════════╝
 """
 
-import unohelper
-
-from com.sun.star.ucb.SynchronizePolicy import SERVER_IS_MASTER
-from com.sun.star.ucb.SynchronizePolicy import CLIENT_IS_MASTER
-from com.sun.star.ucb.SynchronizePolicy import NONE_IS_MASTER
+from ..setup import canUpdatePackages
 
 from ..unotool import getConfiguration
-from ..unotool import getResourceLocation
-from ..unotool import getSimpleFile
-
-from ..dbconfig  import g_folder
+from ..unotool import getStringResource
 
 from ..configuration import g_identifier
-from ..configuration import g_scheme
-from ..configuration import g_separator
 
 import traceback
 
 
-class OptionsModel(unohelper.Base):
+class OptionsModel():
     def __init__(self, ctx):
-        self._ctx = ctx
+        self._update = canUpdatePackages()
         self._config = getConfiguration(ctx, g_identifier, True)
-        folder = g_folder + g_separator + g_scheme
-        location = getResourceLocation(ctx, g_identifier, folder)
-        self._url = location + '.odb'
-        self._policies = {'SERVER_IS_MASTER': 1, 'CLIENT_IS_MASTER': 2, 'NONE_IS_MASTER': 3}
-        self._factors = {'Timeout': 60, 'Chunk': 1024}
+        self._resolver = getStringResource(ctx, g_identifier, 'dialogs', 'OptionsDialog')
+        self._resources = {'Links': 'OptionsDialog.Hyperlink%s.Url'}
+
+    @property
+    def _Setup(self):
+        return self._config.getByName('SetupUpdate')
 
 # OptionsModel getter methods
-    def hasData(self):
-        return getSimpleFile(self._ctx).exists(self._url)
-
-    def isResumable(self):
-        return self._config.getByName('ResumableUpload')
-
     def getViewData(self):
-        return (self._supportShare(), self._isShared(), self._getShare(),
-                self._getPolicy(), self._getTimeout(),
-                self._getDownload(), self._getUpload())
+        return self._update, self._getLinks()
 
-    def getDatasourceUrl(self):
-        return self._url
+    def getConfig(self):
+        return self._config
+
+    def getInitData(self, state):
+        return self._Setup, state
 
 # OptionsModel setter methods
-    def setViewData(self, share, name, index, timeout, download, upload):
-        self._setShared(share)
-        self._setShare(name)
-        self._setPolicy(index)
-        self._setTimeout(timeout)
-        self._setDownload(download)
-        self._setUpload(upload)
-        if self._config.hasPendingChanges():
-            self._config.commitChanges()
+    def setViewData(self, setup):
+        if self._update and setup != self._Setup:
+            self._config.replaceByName('SetupUpdate', setup)
+        if self._common.hasPendingChanges():
+            self._common.commitChanges()
+            return True
+        return False
 
 # OptionsModel private getter methods
-    def _supportShare(self):
-        return self._config.getByName('SupportShare')
-
-    def _isShared(self):
-        return self._config.getByName('SharedDocuments')
-
-    def _getShare(self):
-        return self._config.getByName('SharedFolderName')
-
-    def _getPolicy(self):
-        policy = self._config.getByName('SynchronizePolicy')
-        return self._policies.get(policy)
-
-    def _getTimeout(self):
-        timeout = self._config.getByName('ReplicateTimeout')
-        return timeout / self._factors['Timeout']
-
-    def _getSynchronizePolicy(self, index):
-        for policy, value in self._policies.items():
-            if value == index:
-                return policy
-
-    def _getDownload(self):
-        config = self._config.getByHierarchicalName('Settings/Download')
-        return self._getSetting(config)
-
-    def _getUpload(self):
-        config = self._config.getByHierarchicalName('Settings/Upload')
-        return self._getSetting(config)
-
-    def _getSetting(self, config):
-        setting = {}
-        for name in config.getElementNames():
-            value = config.getByName(name)
-            if name in self._factors:
-                value = value / self._factors[name]
-            setting[name] = value
-        return setting
-
-# OptionsModel private setter methods
-    def _setShared(self, enabled):
-        self._config.replaceByName('SharedDocuments', enabled)
-
-    def _setShare(self, name):
-        if name:
-            self._config.replaceByName('SharedFolderName', name)
-
-    def _setPolicy(self, index):
-        policy = self._getSynchronizePolicy(index)
-        self._config.replaceByName('SynchronizePolicy', policy)
-
-    def _setTimeout(self, timeout):
-        timeout = timeout * self._factors['Timeout']
-        self._config.replaceByName('ReplicateTimeout', timeout)
-
-    def _setDownload(self, setting):
-        config = self._config.getByHierarchicalName('Settings/Download')
-        self._setSetting(config, setting)
-
-    def _setUpload(self, setting):
-        config = self._config.getByHierarchicalName('Settings/Upload')
-        self._setSetting(config, setting)
-
-    def _setSetting(self, config, setting):
-        for name, value in setting.items():
-            if name in self._factors:
-                value = value * self._factors[name]
-            config.replaceByName(name, value)
-
+    def _getLinks(self):
+        links = []
+        for i in range(1, 2):
+            resource = self._resources.get('Links') % i
+            links.append(self._resolver.resolveString(resource))
+        return tuple(links)

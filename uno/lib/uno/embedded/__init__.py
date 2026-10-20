@@ -4,7 +4,7 @@
 """
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -30,20 +30,33 @@
 from . import sdbc
 from . import sdbcx
 
-from .unotool import createService
-from .unotool import getConfiguration
-from .unotool import getDialog
-from .unotool import getDocument
-from .unotool import getFileSequence
-from .unotool import getPropertyValueSet
-from .unotool import getResourceLocation
-from .unotool import getSimpleFile
-from .unotool import getStringResource
-
-from .configuration import g_extension
-from .configuration import g_identifier
-
 from .options import OptionsManager
 
+from .setup import SetupManager
+
+from .helper import checkConfiguration
+from .helper import getExtensions
+
+from .unotool import getConfiguration
+
 from .logger import getLogger
+
+from .unotool import findFrame
+from .unotool import getJobArguments
+from .unotool import getJobArgument
+from .unotool import notifyDispatch
+
+from .jdbcdriver import g_agent
+from .jdbcdriver import g_java
+from .jdbcdriver import g_protocol
+from .jdbcdriver import g_script
+from .jdbcdriver import g_service
+from .jdbcdriver import g_services
+
+from .configuration import g_basename
+from .configuration import g_defaultlog
+from .configuration import g_extension
+from .configuration import g_identifier
+from .configuration import g_memory
+from .configuration import g_setup
 

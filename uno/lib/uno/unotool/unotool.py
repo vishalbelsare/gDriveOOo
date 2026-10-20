@@ -4,7 +4,7 @@
 """
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -29,13 +29,33 @@
 
 import uno
 
+from com.sun.star.awt import Point
 from com.sun.star.awt import Rectangle
+from com.sun.star.awt import Size
+
+from com.sun.star.awt.PosSize import POSSIZE
+from com.sun.star.awt.PosSize import SIZE
+
+from com.sun.star.awt.MessageBoxType import ERRORBOX
+
+from com.sun.star.awt.WindowAttribute import SHOW
+from com.sun.star.awt.WindowAttribute import MINSIZE
+from com.sun.star.awt.WindowAttribute import BORDER
+from com.sun.star.awt.WindowAttribute import MOVEABLE
+from com.sun.star.awt.WindowAttribute import CLOSEABLE
+from com.sun.star.awt.WindowAttribute import NODECORATION
+
+from com.sun.star.awt.WindowClass import TOP
+from com.sun.star.awt.WindowClass import CONTAINER
 
 from com.sun.star.beans.PropertyState import DIRECT_VALUE
 
 from com.sun.star.connection import NoConnectException
 
 from com.sun.star.document.MacroExecMode import ALWAYS_EXECUTE_NO_WARN
+
+from com.sun.star.frame.FrameSearchFlag import GLOBAL
+from com.sun.star.frame.DispatchResultState import SUCCESS
 
 from com.sun.star.lang import WrappedTargetRuntimeException
 
@@ -44,26 +64,61 @@ from com.sun.star.ucb.ConnectionMode import OFFLINE
 
 from com.sun.star.ui.dialogs.ExecutableDialogResults import OK
 
+from com.sun.star.util.MeasureUnit import APPFONT
+
 import binascii
 import datetime
-from packaging import version
-from six import binary_type, string_types
+import operator
+from packaging.version import Version
+import socket
 import traceback
 
 
+def checkInternet(host="8.8.8.8", port=53, timeout=3):
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(timeout)
+            s.connect((host, port))
+        return True
+    except (OSError, socket.timeout):
+        return False
+
+def checkVersion(version, minimum, op=operator.ge):
+    if not version or not minimum:
+        return False
+    try:
+        return op(Version(version), Version(minimum))
+    except InvalidVersion:
+        return False
+
 def getConnectionMode(ctx, host, port=80):
-    connector = createService(ctx, 'com.sun.star.connection.Connector')
+    connector = getConnector(ctx)
     try:
         connection = connector.connect('socket,host=%s,port=%s' % (host, port))
     except NoConnectException:
         mode = OFFLINE
     else:
-        connection.close()
+        try:
+            connection.close()
+        except:
+            pass
         mode = ONLINE
     return mode
 
+def getConnector(ctx):
+    return createService(ctx, 'com.sun.star.connection.Connector')
+
+def getDriverManager(ctx):
+    return createService(ctx, 'com.sun.star.sdbc.DriverManager')
+
 def getDesktop(ctx):
     return createService(ctx, 'com.sun.star.frame.Desktop')
+
+def getDispatcher(ctx):
+    return createService(ctx, 'com.sun.star.frame.DispatchHelper')
+
+def getToolKit(ctx):
+    return createService(ctx, 'com.sun.star.awt.Toolkit')
 
 def getSimpleFile(ctx):
     return createService(ctx, 'com.sun.star.ucb.SimpleFileAccess')
@@ -86,8 +141,30 @@ def getPathSettings(ctx):
 def getUrlTransformer(ctx):
     return createService(ctx, 'com.sun.star.util.URLTransformer')
 
+def getSystemClipboard(ctx):
+    return createService(ctx, 'com.sun.star.datatransfer.clipboard.SystemClipboard')
+
 def getInteractionHandler(ctx):
     return createService(ctx, 'com.sun.star.task.InteractionHandler')
+
+def getMailMerge(ctx):
+    return createService(ctx, 'com.sun.star.text.MailMerge')
+
+def getMri(ctx):
+    return createService(ctx, 'mytools.Mri')
+
+def getCallBack(ctx):
+    return createService(ctx, 'com.sun.star.awt.AsyncCallback')
+
+def getRowSet(ctx):
+    return createService(ctx, 'com.sun.star.sdb.RowSet')
+
+def getSequenceInputStream(ctx, sequence):
+    service = 'com.sun.star.io.SequenceInputStream'
+    return createService(ctx, service, sequence)
+
+def getMimeTypeFactory(ctx):
+    return createService(ctx, 'com.sun.star.datatransfer.MimeContentTypeFactory')
 
 def getUrlPresentation(ctx, location, password=False):
     url = uno.createUnoStruct('com.sun.star.util.URL')
@@ -107,18 +184,37 @@ def parseUrl(transformer, location, protocol=None):
         success, url = transformer.parseSmart(url, protocol)
     return url if success else None
 
-def getDocument(ctx, url):
-    properties = {'Hidden': True,
-                  'OpenNewView': True,
-                  'MacroExecutionMode': ALWAYS_EXECUTE_NO_WARN}
-    descriptor = getPropertyValueSet(properties)
+def getDocument(ctx, url, readonly=True):
+    # XXX: ReadOnly: documents opened for mailing are opened readonly because they must
+    # XXX: be opened as a new document and this document could be open already
+    # XXX: OpenNewView: always open a new document because it must be disposed afterwards.
+    # XXX: Hidden: mailing is done in a hidden view
+    # XXX: Silence: load document for mailing without user interaction
+    arguments = {'ReadOnly': readonly, 'OpenNewView': True, 'Hidden': True, 'Silence': True}
+    descriptor = getPropertyValueSet(arguments)
     document = getDesktop(ctx).loadComponentFromURL(url, '_blank', 0, descriptor)
     return document
+
+def hasStartupJob(ctx, job):
+    config = getConfiguration(ctx, '/org.openoffice.Office.Jobs/Events/OnStartApp/JobList')
+    return config.hasByName(job)
+
+def registerStartupJob(ctx, job):
+    config = getConfiguration(ctx, '/org.openoffice.Office.Jobs/Events/OnStartApp/JobList', True)
+    if not config.hasByName(job):
+        config.insertByName(job, config.createInstance())
+        config.commitChanges()
+
+def deregisterStartupJob(ctx, job):
+    config = getConfiguration(ctx, '/org.openoffice.Office.Jobs/Events/OnStartApp/JobList', True)
+    if config.hasByName(job):
+        config.removeByName(job)
+        config.commitChanges()
 
 def getExceptionMessage(exception):
     messages = []
     if hasattr(exception, 'args'):
-        messages = [arg for arg in exception.args if isinstance(arg, string_types)]
+        messages = [arg for arg in exception.args if isinstance(arg, str)]
     count = len(messages)
     if count == 0:
         try:
@@ -129,32 +225,37 @@ def getExceptionMessage(exception):
         message = messages[0]
     else:
         message = max(messages, key=len)
-    if isinstance(message, binary_type):
+    if isinstance(message, bytes):
         message = message.decode('utf-8')
     message = ' '.join(message.split())
     return message
 
 def getFileSequence(ctx, url, default=None):
-    length = 0
-    sequence = uno.ByteSequence(b'')
+    path = None
     fs = getSimpleFile(ctx)
     if fs.exists(url):
-        inputstream = fs.openFileRead(url)
-        size = fs.getSize(url)
-        length, sequence = _getSequence(inputstream, size)
+        path = url
     elif default is not None and fs.exists(default):
-        inputstream = fs.openFileRead(default)
-        size = fs.getSize(default)
-        length, sequence = _getSequence(inputstream, size)
-    return length, sequence
+        path = default
+    if path is None:
+        sequence = uno.ByteSequence(b'')
+    else:
+        sequence = getStreamSequence(fs.openFileRead(path))
+    return len(sequence), sequence
 
-def _getSequence(inputstream, length):
-    length, sequence = inputstream.readBytes(None, length)
-    inputstream.closeInput()
-    return length, sequence
+def getPathSubstitution(ctx, path):
+     pathsubstitution = createService(ctx, 'com.sun.star.util.PathSubstitution')
+     return pathsubstitution.substituteVariables(path, True)
 
-def checkVersion(ver, minimum):
-    return version.parse(ver) >= version.parse(minimum)
+def getStreamSequence(stream, chunk=64*1024):
+    close = False
+    sequence = uno.ByteSequence(b'')
+    while not close:
+        count, buffer = stream.readBytes(None, chunk)
+        close = count != chunk
+        sequence += buffer
+    stream.closeInput()
+    return sequence
 
 def hasInterface(component, interface):
     for t in getComponentTypes(component):
@@ -162,16 +263,23 @@ def hasInterface(component, interface):
             return True
     return False
 
+def hasFrameInterface(component):
+    frame = 'com.sun.star.frame.XFrame2'
+    desktop = 'com.sun.star.frame.XDesktop2'
+    return hasInterface(component, frame) or hasInterface(component, desktop)
+
 def hasService(ctx, name):
     service = createService(ctx, name)
     return service is not None
 
 def getComponentTypes(component):
     try:
-        types = component.getTypes()
+        return component.getTypes()
     except:
-        types = ()
-    return types
+        return ()
+
+def getInterfaceNames(component):
+    return (t.typeName for t in getComponentTypes(component))
 
 def getInterfaceTypes(component):
     return getComponentTypes(component)
@@ -195,6 +303,22 @@ def getExtensionVersion(ctx, extension):
         if name == extension:
             return version
     return None
+
+def getLastNamedParts(name, sep='.'):
+    part1, sep, part2 = name.rpartition(sep)
+    if not sep:
+        part1, part2 = part2, None
+    return part1, part2
+
+def getLibreOfficeInfo(ctx):
+    config = getConfiguration(ctx, '/org.openoffice.Setup/Product')
+    name = config.getByName('ooName')
+    version = config.getByName('ooSetupVersion')
+    return name, version
+
+def getLibreOfficeVersion(ctx):
+    version = getConfiguration(ctx, '/org.openoffice.Setup/Product').getByName('ooSetupVersion')
+    return version
 
 def getResourceLocation(ctx, identifier, path=None):
     service = '/singletons/com.sun.star.deployment.PackageInformationProvider'
@@ -247,33 +371,130 @@ def getStringResourceWithLocation(ctx, url, filename, locale=None):
 def generateUuid():
     return binascii.hexlify(uno.generateUuid().value).decode('utf-8')
 
-def getDialog(ctx, library, xdl, handler=None, window=None):
+def setProgress(callback, caller, value):
+    data = {'call': 'progress', 'value': value}
+    callback.addCallback(caller, getNamedValueSet(data))
+
+def getDialog(ctx, identifier, xdl, handler=None, parent=None):
     dialog = None
     provider = createService(ctx, 'com.sun.star.awt.DialogProvider2')
-    url = getDialogUrl(library, xdl)
-    if handler is None and window is None:
-        dialog = provider.createDialog(url)
-        toolkit = createService(ctx, 'com.sun.star.awt.Toolkit')
-        dialog.createPeer(toolkit, None)
-    elif handler is not None and window is None:
-        dialog = provider.createDialogWithHandler(url, handler)
-        toolkit = createService(ctx, 'com.sun.star.awt.Toolkit')
-        dialog.createPeer(toolkit, None)
+    url = getDialogUrl(identifier, xdl)
+    if handler and parent:
+        properties = getNamedValueSet({'ParentWindow': parent, 'EventHandler': handler})
+        dialog = provider.createDialogWithArguments(url, properties)
     else:
-        args = getNamedValueSet({'ParentWindow': window, 'EventHandler': handler})
-        dialog = provider.createDialogWithArguments(url, args)
+        if handler:
+            dialog = provider.createDialogWithHandler(url, handler)
+        else:
+            dialog = provider.createDialog(url)
+        toolkit = getToolKit(ctx)
+        dialog.createPeer(toolkit, toolkit.getDesktopWindow())
     return dialog
 
-def getContainerWindow(ctx, parent, handler, library, xdl):
-    window = None
+def findFrame(ctx, name, flags=GLOBAL):
+    return getDesktop(ctx).findFrame(name, flags)
+
+def getDialogPosSize(ctx, extension, xdl, point=None, unit=APPFONT):
+    dialog = getDialog(ctx, extension, xdl)
+    size = dialog.convertSizeToPixel(Size(dialog.Model.Width, dialog.Model.Height), unit)
+    dialog.dispose()
+    if point is None:
+        point = Point(0, 0)
+    return Rectangle(point.X, point.Y, size.Width, size.Height)
+
+def getTopWindow(ctx, name, rectangle=None, parent=None, modal=TOP, attrs=BORDER | MOVEABLE | CLOSEABLE | NODECORATION):
+    descriptor = uno.createUnoStruct('com.sun.star.awt.WindowDescriptor')
+    descriptor.Type = modal
+    descriptor.WindowServiceName = 'window'
+    if parent:
+        descriptor.Parent = parent
+    else:
+        descriptor.ParentIndex = -1
+    if rectangle:
+        attrs |= SHOW
+        descriptor.Bounds = rectangle
+    descriptor.WindowAttributes = attrs
+    # XXX: We use the TaskCreator UNO service instead of Frame
+    # XXX: in order to be able to assign a title to the window.
+    service = 'com.sun.star.frame.TaskCreator'
+    arguments = {'FrameName': name, 'ContainerWindow': getToolKit(ctx).createWindow(descriptor)}
+    frame = createService(ctx, service).createInstanceWithArguments(getNamedValueSet(arguments))
+    getDesktop(ctx).getFrames().append(frame)
+    return frame
+
+def getDialogPosition(dialog, window):
+    size = window.getPosSize()
+    pos = dialog.convertPointToLogic(Point(size.X, size.Y), APPFONT)
+    x = dialog.Model.PositionX + pos.X
+    y = dialog.Model.PositionY + pos.Y
+    return Point(x, y)
+
+def setDialogPosition(ctx, dialog, window, point, titlebar=9):
+    x, y = _getPosition(ctx, dialog, point)
+    size = window.getPosSize()
+    pos = dialog.convertPointToLogic(Point(size.X, size.Y), APPFONT)
+    dialog.Model.PositionX = x - pos.X
+    dialog.Model.PositionY = y - pos.Y - titlebar
+
+def getWindowPosition(window):
+    size = window.getPosSize()
+    return window.convertPointToLogic(Point(size.X, size.Y), APPFONT)
+
+def setWindowPosition(ctx, window, dialog, point, title):
+    x, y = _getPosition(ctx, dialog, point)
+    size = dialog.convertSizeToPixel(Size(dialog.Model.Width, dialog.Model.Height), APPFONT)
+    point = dialog.convertPointToPixel(Point(x, y), APPFONT)
+    window.getContainerWindow().setPosSize(point.X, point.Y, size.Width, size.Height, POSSIZE)
+    window.setTitle(title)
+    # FIXME: If the window loads before the desktop, it should not be made visible.
+    if getDesktop(ctx).getCurrentFrame() is not None:
+        window.getContainerWindow().setVisible(True)
+    dialog.setVisible(True)
+
+def _getPosition(ctx, dialog, point):
+    area = getToolKit(ctx).getWorkArea()
+    size = dialog.convertSizeToLogic(Size(area.Width, area.Height), APPFONT)
+    width = dialog.Model.Width
+    height = dialog.Model.Height
+    if 0 <= point.X <= (size.Width - width) and 0 <= point.Y <= (size.Height - height):
+        x = point.X
+        y = point.Y
+    else:
+        x = (size.Width - width) // 2
+        y = (size.Height - height) // 2
+    x = max(0, min(x, size.Width - width))
+    y = max(0, min(y, size.Height - height))
+    return x, y
+
+def getDialogSize(ctx, extension, xdl, point=None, unit=APPFONT):
+    dialog = getDialog(ctx, extension, xdl)
+    size = dialog.convertSizeToPixel(Size(dialog.Model.Width, dialog.Model.Height), unit)
+    dialog.dispose()
+    if point is None:
+        point = Point(0, 0)
+    return Rectangle(point.X, point.Y, size.Width, size.Height)
+
+def saveWindowPosition(config, position, property):
+    if config.hasByName(property):
+        any = uno.Any('[]long', (position.X, position.Y))
+        uno.invoke(config, 'replaceByName', (property, any))
+        config.commitChanges()
+
+def getWindowHeight(window, offset):
+    size = window.getPosSize()
+    point = window.convertPointToPixel(Point(0, offset), APPFONT)
+    return Point(size.Height, size.Height + point.Y)
+
+def setWindowHeight(frame, height):
+    window = frame.getContainerWindow()
+    size = window.getPosSize()
+    window.setPosSize(0, 0, size.Width, height, SIZE)
+
+def getContainerWindow(ctx, parent, handler, identifier, xdl):
     service = 'com.sun.star.awt.ContainerWindowProvider'
     provider = createService(ctx, service)
-    url = getDialogUrl(library, xdl)
-    try:
-        window = provider.createContainerWindow(url, '', parent, handler)
-    except WrappedTargetRuntimeException as e:
-        print("unotool.getContainerWindow() ERROR: %s - %s" % (e, traceback.format_exc()))
-    return window
+    url = getDialogUrl(identifier, xdl)
+    return provider.createContainerWindow(url, '', parent, handler)
 
 def getFileUrl(ctx, title, path, filters=(), multi=False):
     url = None
@@ -286,49 +507,74 @@ def getFileUrl(ctx, title, path, filters=(), multi=False):
             filepicker.setCurrentFilter(name)
     filepicker.setMultiSelectionMode(multi)
     if filepicker.execute() == OK:
-        url = filepicker.getFiles()[0]
         if multi:
-            try:
-                urls = filepicker.getSelectedFiles()
-            except:
-                urls = filepicker.getFiles()
-                if len(urls) > 1:
-                    urls = [url + u for u in urls[1:]]
-            url = urls
+            url = filepicker.getSelectedFiles()
+        else:
+            url = filepicker.getSelectedFiles()[0]
         path = filepicker.getDisplayDirectory()
     filepicker.dispose()
     return url, path
 
-def getDialogUrl(library, xdl):
-    return 'vnd.sun.star.script:%s.%s?location=application' % (library, xdl)
+def getDialogUrl(identifier, xdl):
+    return 'vnd.sun.star.extension://%s/dialogs/%s.xdl' % (identifier, xdl)
 
 def executeShell(ctx, url, option=''):
     shell = createService(ctx, 'com.sun.star.system.SystemShellExecute')
     shell.execute(url, option, 0)
 
-def executeFrameDispatch(ctx, frame, url, arguments=(), listener=None):
+def executeDispatch(ctx, url, /, **kwargs):
+    frame = _getCurrentFrame(ctx)
+    properties = getPropertyValueSet(kwargs)
+    getDispatcher(ctx).executeDispatch(frame, url, '', 0, properties)
+
+def executeDesktopDispatch(ctx, url, listener=None, /, **kwargs):
+    frame = _getCurrentFrame(ctx)
+    properties = getPropertyValueSet(kwargs)
+    executeFrameDispatch(ctx, frame, url, listener, *properties)
+
+def getJobArguments(arguments):
+    kwargs = {}
+    for argument in arguments:
+        if (argument.Name == 'DynamicData'):
+            for arg in argument.Value:
+                kwargs[arg.Name.lower()] = arg.Value
+    return kwargs
+
+def getJobArgument(kwargs, key='dispatch'):
+    argument = None
+    for name in kwargs:
+        if (name == key):
+            argument = kwargs[name]
+            break
+    return argument
+
+def notifyDispatch(source, listener, result=SUCCESS, value=None):
+    if listener is not None:
+        struct = 'com.sun.star.frame.DispatchResultEvent'
+        notification = uno.createUnoStruct(struct, source, result, value)
+        listener.dispatchFinished(notification)
+
+def _getCurrentFrame(ctx):
+    desktop = getDesktop(ctx)
+    frame = desktop.getCurrentFrame()
+    if frame is None:
+        frame = desktop
+    return frame
+
+def executeFrameDispatch(ctx, frame, url, listener=None, /, *properties):
     url = getUrl(ctx, url)
     dispatcher = frame.queryDispatch(url, '', 0)
     if dispatcher is not None:
         if listener is not None:
-            dispatcher.dispatchWithNotification(url, arguments, listener)
-            print("unotool.executeFrameDispatch() dispatchWithNotification")
+            dispatcher.dispatchWithNotification(url, properties, listener)
         else:
-            dispatcher.dispatch(url, arguments)
-            print("unotool.executeFrameDispatch() dispatch")
+            dispatcher.dispatch(url, properties)
 
-def executeDispatch(ctx, url, arguments=(), listener=None):
-    frame = getDesktop(ctx).getCurrentFrame()
-    executeFrameDispatch(ctx, frame, url, arguments, listener)
-
-def createMessageBox(peer, message, title, box='message', buttons=2):
-    boxtypes = {'message': 'MESSAGEBOX',
-                'info': 'INFOBOX',
-                'warning': 'WARNINGBOX',
-                'error': 'ERRORBOX',
-                'query': 'QUERYBOX'}
-    box = uno.Enum('com.sun.star.awt.MessageBoxType', boxtypes.get(box, 'MESSAGEBOX'))
-    return peer.getToolkit().createMessageBox(peer, box, buttons, title, message)
+def createMessageBox(ctx, title, message, box=ERRORBOX, button=1, parent=None):
+    toolkit = getToolKit(ctx)
+    if parent is None:
+        parent = toolkit.getDesktopWindow()
+    return toolkit.createMessageBox(parent, box, button, title, message)
 
 def createService(ctx, name, *args, **kwargs):
     if args:
@@ -339,6 +585,21 @@ def createService(ctx, name, *args, **kwargs):
     else:
         service = ctx.ServiceManager.createInstanceWithContext(name, ctx)
     return service
+
+def getArgumentSet(properties, lower=True):
+    arguments = {}
+    for property in properties:
+        name = property.Name
+        if lower:
+            name = name.lower()
+        arguments[name] = property.Value
+    return arguments
+
+def getDefaultPropertyValueSet(args, default):
+    properties = []
+    for key in args:
+        properties.append(getPropertyValue(key, default))
+    return tuple(properties)
 
 def getPropertyValueSet(kwargs):
     properties = []
@@ -373,19 +634,6 @@ def getPropertySetInfoChangeEvent(source, name, reason, handle=-1):
     event.Handle = handle
     event.Reason = reason
 
-def createWindow(ctx, extension, xdl, name):
-    dialog = getDialog(ctx, extension, xdl, None, None)
-    possize = Rectangle(dialog.Model.PositionX, dialog.Model.PositionY, dialog.Model.Width, dialog.Model.Height)
-    dialog.dispose()
-    desktop = getDesktop(ctx)
-    args = getNamedValueSet({'FrameName': name, 'PosSize': possize})
-    frame = createService(ctx, 'com.sun.star.frame.TaskCreator').createInstanceWithArguments(args)
-    frames = desktop.getFrames()
-    frame.setTitle(_getUniqueName(frames, name))
-    frame.setCreator(desktop)
-    frames.append(frame)
-    return frame.getContainerWindow()
-
 def _getUniqueName(frames, name):
     count = 0
     for i in range(frames.getCount()):
@@ -394,15 +642,6 @@ def _getUniqueName(frames, name):
     if count > 0:
         name = '%s - %s' % (name, (count +1))
     return name
-
-
-def getParentWindow(ctx):
-    desktop = getDesktop(ctx)
-    try:
-        parent = desktop.getCurrentFrame().getContainerWindow()
-    except:
-        parent = None
-    return parent
 
 def getDateTime(utc=True):
     if utc:

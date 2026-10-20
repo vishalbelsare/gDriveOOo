@@ -4,7 +4,7 @@
 """
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -27,169 +27,107 @@
 ╚════════════════════════════════════════════════════════════════════════════════════╝
 """
 
-from com.sun.star.sdbc import SQLException
-from com.sun.star.logging.LogLevel import INFO
-from com.sun.star.logging.LogLevel import SEVERE
+from com.sun.star.sdbc.ColumnValue import NO_NULLS
+from com.sun.star.sdbc.ColumnValue import NULLABLE
 
-from .unotool import checkVersion
-from .unotool import createService
-from .unotool import getResourceLocation
-from .unotool import getSimpleFile
+from com.sun.star.sdbc.DataType import INTEGER
+from com.sun.star.sdbc.DataType import VARCHAR
 
-from .dbconfig import g_path
-from .dbconfig import g_version
-from .dbconfig import g_role
-from .dbconfig import g_csv
+from com.sun.star.sdbc import KeyRule
 
-from .dbtool import registerDataSource
-from .dbtool import executeQueries
-from .dbtool import executeSqlQueries
-from .dbtool import getDataSourceConnection
-from .dbtool import getDataSourceCall
-from .dbtool import getSequenceFromResult
-from .dbtool import getDataFromResult
-from .dbtool import createDataSource
-from .dbtool import checkDataBase
-from .dbtool import createStaticTable
+from com.sun.star.sdbcx import CheckOption
+from com.sun.star.sdbcx import PrivilegeObject
+
+from .dbtool import getConnectionUrl
+from .dbtool import getTablePrivileges
+from .dbtool import getPrivileges
 
 from .dbqueries import getSqlQuery
 
+from .ucp import g_ucbseparator
+
+from .dbconfig import g_catalog
+from .dbconfig import g_folder
+from .dbconfig import g_schema
+from .dbconfig import g_role
+from .dbconfig import g_queries
+
 from .configuration import g_scheme
-from .configuration import g_separator
 
 import traceback
 
 
-def getDataSourceUrl(ctx, dbname, plugin, register):
-    error = None
-    url = getResourceLocation(ctx, plugin, g_path)
-    odb = '%s/%s.odb' % (url, dbname)
-    dbcontext = createService(ctx, 'com.sun.star.sdb.DatabaseContext')
-    if not getSimpleFile(ctx).exists(odb):
-        datasource = createDataSource(dbcontext, url, dbname)
-        error = createDataBase(ctx, datasource, url, dbname)
-        if error is None:
-            datasource.DatabaseDocument.storeAsURL(odb, ())
-    if error is None and register:
-        registerDataSource(dbcontext, dbname, odb)
-    return url, error
+def getDataBaseUrl(ctx):
+    return getConnectionUrl(ctx, g_folder + g_ucbseparator + g_scheme)
 
-def createDataBase(ctx, connection):
-    version, error = checkDataBase(ctx, connection)
-    if error is None:
-        statement = connection.createStatement()
-        createStaticTable(statement, getStaticTables(), g_csv, True)
-        tables, statements = getTablesAndStatements(statement, version)
-        executeSqlQueries(statement, tables)
-        executeQueries(statement, getViews())
-    return error
-
-def _getTableNames(ctx, statement):
-    result = statement.executeQuery(getSqlQuery(ctx, 'getTableNames'))
-    names = getSequenceFromResult(result)
-    result.close()
-    return names
-
-def getTablesAndStatements(ctx, statement, version=g_version):
-    tables = []
-    statements = []
-    call = getDataSourceCall(ctx, statement.getConnection(), 'getTables')
-    for table in _getTableNames(ctx, statement):
-        view = False
-        versioned = False
-        columns = []
-        primary = []
-        unique = []
-        constraint = []
-        call.setString(1, table)
-        result = call.executeQuery()
-        while result.next():
-            data = getDataFromResult(result)
-            view = data.get('View')
-            versioned = data.get('Versioned')
-            column = data.get('Column')
-            definition = '"%s"' % column
-            definition += ' %s' % data.get('Type')
-            default = data.get('Default')
-            definition += ' DEFAULT %s' % default if default else ''
-            options = data.get('Options')
-            definition += ' %s' % options if options else ''
-            columns.append(definition)
-            if data.get('Primary'):
-                primary.append('"%s"' % column)
-            if data.get('Unique'):
-                unique.append({'Table': table, 'Column': column})
-            if data.get('ForeignTable') and data.get('ForeignColumn'):
-                constraint.append({'Table': table,
-                                   'Column': column,
-                                   'ForeignTable': data.get('ForeignTable'),
-                                   'ForeignColumn': data.get('ForeignColumn')})
-        if primary:
-            columns.append(getSqlQuery(ctx, 'getPrimayKey', primary))
-        for format in unique:
-            columns.append(getSqlQuery(ctx, 'getUniqueConstraint', format))
-        for format in constraint:
-            columns.append(getSqlQuery(ctx, 'getForeignConstraint', format))
-        if checkVersion(version, g_version) and versioned:
-            columns.append(getSqlQuery(ctx, 'getPeriodColumns'))
-        format = (table, ','.join(columns))
-        query = getSqlQuery(ctx, 'createTable', format)
-        if checkVersion(version, g_version) and versioned:
-            query += getSqlQuery(ctx, 'getSystemVersioning')
-        tables.append(query)
-        if view:
-            typed = False
-            for format in constraint:
-                if format['Column'] == 'Type':
-                    typed = True
-                    break
-            format = {'Table': table}
-            if typed:
-                merge = getSqlQuery(ctx, 'createTypedDataMerge', format)
-            else:
-                merge = getSqlQuery(ctx, 'createUnTypedDataMerge', format)
-            statements.append(merge)
-    call.close()
-    return tables, statements
+def getDataSourceUrl(ctx):
+    return getConnectionUrl(ctx, g_folder + g_ucbseparator + g_scheme + '.odb')
 
 def getStaticTables():
-    tables = ('Tables',
-              'Columns',
-              'TableColumn',
-              'Settings')
-    return tables
+    yield 'Privileges',      {'CatalogName': g_catalog,
+                              'SchemaName':  g_schema,
+                              'Type':        'TEXT TABLE',
+                              'Columns': ({'Name': 'Table',
+                                           'TypeName': 'INTEGER',
+                                           'Type': INTEGER,
+                                           'IsNullable': NO_NULLS},
+                                          {'Name': 'Column',
+                                           'TypeName': 'INTEGER',
+                                           'Type': INTEGER,
+                                           'IsNullable': NULLABLE,
+                                           'DefaultValue': 'NULL'},
+                                          {'Name': 'Role',
+                                           'TypeName': 'VARCHAR',
+                                           'Type': VARCHAR,
+                                           'Scale': 100,
+                                           'IsNullable': NO_NULLS},
+                                          {'Name': 'Privilege',
+                                           'TypeName': 'INTEGER',
+                                           'Type': INTEGER,
+                                           'IsNullable': NO_NULLS})}
 
-def getQueries():
-    return (('createRole',{'Role': g_role}),
-            ('grantPrivilege',{'Privilege':'SELECT,UPDATE','Table': 'Users', 'Role': g_role}),
-            ('grantPrivilege',{'Privilege':'SELECT,INSERT,DELETE','Table': 'Identifiers', 'Role': g_role}),
-            ('grantPrivilege',{'Privilege':'SELECT,INSERT,UPDATE,DELETE','Table': 'Items', 'Role': g_role}),
-            ('grantPrivilege',{'Privilege':'SELECT,INSERT,UPDATE,DELETE','Table': 'Parents', 'Role': g_role}),
-            ('grantPrivilege',{'Privilege':'SELECT,INSERT,UPDATE,DELETE','Table': 'Capabilities', 'Role': g_role}),
+def getForeignKeys():
+    yield (f'{g_catalog}.{g_schema}.Privileges', 'Table',  f'{g_catalog}.{g_schema}.Tables',  'Table',  KeyRule.CASCADE, KeyRule.CASCADE)
+    yield (f'{g_catalog}.{g_schema}.Privileges', 'Column', f'{g_catalog}.{g_schema}.Columns', 'Column', KeyRule.CASCADE, KeyRule.CASCADE)
 
-            ('createGetTitle',{'Role': g_role}),
-            ('createGetUniqueName',{'Role': g_role, 'Prefix': ' ~', 'Suffix': ''}),
+def getFunctions():
+    for name in ('GetIsFolder', 'GetContentType', 'GetUniqueName'):
+        yield name
 
-            ('createChildView',{'Role': g_role}),
-            ('createTwinView',{'Role': g_role}),
-            ('createUriView',{'Role': g_role}),
-            ('createItemView',{'Role': g_role}),
-            ('createTitleView',{'Role': g_role}),
-            ('createChildrenView',{'Role': g_role}),
-            ('createPathView',{'Role': g_role, 'Separator': g_separator}),
+def getDefaultPrivileges(statement):
+    yield from getTablePrivileges(statement, getPrivileges())
 
-            ('createGetIdentifier',{'Role': g_role, 'Separator': g_separator}),
-            ('createGetRoot',{'Role': g_role}),
-            ('createGetItem',{'Role': g_role}),
-            ('createGetNewTitle',{'Role': g_role}),
-            ('createUpdatePushItems',{'Role': g_role}),
-            ('createGetPushItems',{'Role': g_role}),
-            ('createGetPushProperties',{'Role': g_role}),
-            ('createGetItemParentIds',{'Role': g_role}),
-            ('createInsertUser',{'Role': g_role}),
-            ('createInsertSharedFolder',{'Role': g_role}),
-            ('createMergeItem',{'Role': g_role}),
-            ('createMergeParent',{'Role': g_role}),
-            ('createInsertItem',{'Role': g_role}),
-            ('createPullChanges',{'Role': g_role}),
-            ('createUpdateNewItemId',{'Role': g_role}))
+def getViews(ctx, connection):
+    yield from _getViews(ctx, _getViewNames(), 'get%sViewCommand', g_queries, CheckOption.CASCADE)
+
+def getViewPrivileges(statement):
+    yield from _getViewOptions(_getViewNames(), PrivilegeObject.TABLE, g_role, 1)
+
+def getProcedures():
+    for name in ('GetItem',
+                 'UpdatePushItems',
+                 'GetPushItems',
+                 'GetPushProperties',
+                 'GetItemParentIds',
+                 'InsertUser',
+                 'MergeItem',
+                 'InsertItem',
+                 'UpdateNewItemId'):
+        yield name
+
+def _getViews(ctx, items, command, format, *option):
+    for catalog, schema, name in items:
+        yield catalog, schema, name, getSqlQuery(ctx, command % name, format), *option
+
+def _getViewNames(catalog=g_catalog, schema=g_schema):
+    for name in ('Child',
+                 'Twin',
+                 'Duplicate',
+                 'Path',
+                 'Children'):
+        yield catalog, schema, name
+
+def _getViewOptions(items, *options):
+    for catalog, schema, name in items:
+        yield catalog, schema, name, *options
+

@@ -1,17 +1,16 @@
-from __future__ import annotations
-
 """
-
 This module implements a parser and serializer for the CSV SPARQL result
 formats
 
 http://www.w3.org/TR/sparql11-results-csv-tsv/
-
 """
+
+from __future__ import annotations
 
 import codecs
 import csv
-from typing import IO, Dict, List, Optional, Union
+from io import BufferedIOBase, TextIOBase
+from typing import IO, Dict, List, Optional, Union, cast
 
 from rdflib.plugins.sparql.processor import SPARQLResult
 from rdflib.query import Result, ResultParser, ResultSerializer
@@ -19,6 +18,8 @@ from rdflib.term import BNode, Identifier, Literal, URIRef, Variable
 
 
 class CSVResultParser(ResultParser):
+    """Parses SPARQL CSV results into a Result object."""
+
     def __init__(self):
         self.delim = ","
 
@@ -61,6 +62,8 @@ class CSVResultParser(ResultParser):
 
 
 class CSVResultSerializer(ResultSerializer):
+    """Serializes SPARQL results into CSV format."""
+
     def __init__(self, result: SPARQLResult):
         ResultSerializer.__init__(self, result)
 
@@ -71,13 +74,19 @@ class CSVResultSerializer(ResultSerializer):
     def serialize(self, stream: IO, encoding: str = "utf-8", **kwargs) -> None:
         # the serialiser writes bytes in the given encoding
         # in py3 csv.writer is unicode aware and writes STRINGS,
-        # so we encode afterwards
+        # so we encode afterward
 
         import codecs
 
-        stream = codecs.getwriter(encoding)(stream)  # type: ignore[assignment]
+        # TODO: Find a better solution for all this casting
+        writable_stream = cast(Union[TextIOBase, BufferedIOBase], stream)
+        if isinstance(writable_stream, TextIOBase):
+            string_stream: TextIOBase = writable_stream
+        else:
+            byte_stream = cast(BufferedIOBase, writable_stream)
+            string_stream = cast(TextIOBase, codecs.getwriter(encoding)(byte_stream))
 
-        out = csv.writer(stream, delimiter=self.delim)
+        out = csv.writer(string_stream, delimiter=self.delim)
 
         vs = [self.serializeTerm(v, encoding) for v in self.result.vars]  # type: ignore[union-attr]
         out.writerow(vs)

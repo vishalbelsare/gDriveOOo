@@ -1,53 +1,34 @@
-import json
-import logging
-import sys
-import warnings
-from functools import lru_cache
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Set, Tuple, Union
-from unicodedata import category
-from urllib.parse import urldefrag, urljoin
-
-from rdflib.term import URIRef, Variable, _is_valid_uri
-
-if TYPE_CHECKING:
-    from rdflib.graph import Graph
-    from rdflib.store import Store
-
-__doc__ = """
-===================
-Namespace Utilities
-===================
+"""
+# Namespace Utilities
 
 RDFLib provides mechanisms for managing Namespaces.
 
-In particular, there is a :class:`~rdflib.namespace.Namespace` class
+In particular, there is a [`Namespace`][rdflib.namespace.Namespace] class
 that takes as its argument the base URI of the namespace.
 
-.. code-block:: pycon
+```python
+>>> from rdflib.namespace import Namespace
+>>> RDFS = Namespace("http://www.w3.org/1999/02/22-rdf-syntax-ns#")
 
-    >>> from rdflib.namespace import Namespace
-    >>> RDFS = Namespace("http://www.w3.org/1999/02/22-rdf-syntax-ns#")
+```
 
 Fully qualified URIs in the namespace can be constructed either by attribute
 or by dictionary access on Namespace instances:
 
-.. code-block:: pycon
+```python
+>>> RDFS.seeAlso
+rdflib.term.URIRef('http://www.w3.org/1999/02/22-rdf-syntax-ns#seeAlso')
+>>> RDFS['seeAlso']
+rdflib.term.URIRef('http://www.w3.org/1999/02/22-rdf-syntax-ns#seeAlso')
 
-    >>> RDFS.seeAlso
-    rdflib.term.URIRef('http://www.w3.org/1999/02/22-rdf-syntax-ns#seeAlso')
-    >>> RDFS['seeAlso']
-    rdflib.term.URIRef('http://www.w3.org/1999/02/22-rdf-syntax-ns#seeAlso')
+```
 
-
-Automatic handling of unknown predicates
------------------------------------------
+## Automatic handling of unknown predicates
 
 As a programming convenience, a namespace binding is automatically
-created when :class:`rdflib.term.URIRef` predicates are added to the graph.
+created when [`URIRef`][rdflib.term.URIRef] predicates are added to the graph.
 
-Importable namespaces
------------------------
+## Importable namespaces
 
 The following namespaces are available by directly importing from rdflib:
 
@@ -79,12 +60,46 @@ The following namespaces are available by directly importing from rdflib:
 * WGS
 * XSD
 
-.. code-block:: pycon
+```python
+>>> from rdflib.namespace import RDFS
+>>> RDFS.seeAlso
+rdflib.term.URIRef('http://www.w3.org/2000/01/rdf-schema#seeAlso')
 
-    >>> from rdflib.namespace import RDFS
-    >>> RDFS.seeAlso
-    rdflib.term.URIRef('http://www.w3.org/2000/01/rdf-schema#seeAlso')
+```
 """
+
+from __future__ import annotations
+
+import logging
+import warnings
+
+try:
+    # Python >= 3.14
+    from annotationlib import (
+        get_annotations,  # type: ignore[attr-defined,unused-ignore]
+    )
+except ImportError:  # pragma: no cover
+    try:
+        # Python >= 3.10
+        from inspect import get_annotations  # type: ignore[attr-defined,unused-ignore]
+    except ImportError:
+
+        def get_annotations(thing: Any) -> dict:
+            return thing.__annotations__
+
+
+from functools import lru_cache
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Set, Tuple, Union
+from unicodedata import category
+from urllib.parse import urldefrag, urljoin
+
+from rdflib.term import URIRef, Variable, _is_valid_uri
+
+if TYPE_CHECKING:
+    from rdflib.graph import Graph
+    from rdflib.store import Store
+
 
 __all__ = [
     "is_ncname",
@@ -93,15 +108,43 @@ __all__ = [
     "ClosedNamespace",
     "DefinedNamespace",
     "NamespaceManager",
+    "BRICK",
+    "CSVW",
+    "DC",
+    "DCAM",
+    "DCAT",
+    "DCMITYPE",
+    "DCTERMS",
+    "DOAP",
+    "FOAF",
+    "GEO",
+    "ODRL2",
+    "ORG",
+    "OWL",
+    "PROF",
+    "PROV",
+    "QB",
+    "RDF",
+    "RDFS",
+    "SDO",
+    "SH",
+    "SKOS",
+    "SOSA",
+    "SSN",
+    "TIME",
+    "VANN",
+    "VOID",
+    "WGS",
+    "XSD",
 ]
 
 logger = logging.getLogger(__name__)
 
 
 class Namespace(str):
-    """
-    Utility class for quickly generating URIRefs with a common prefix
+    """Utility class for quickly generating URIRefs with a common prefix.
 
+    ```python
     >>> from rdflib.namespace import Namespace
     >>> n = Namespace("http://example.org/")
     >>> n.Person # as attribute
@@ -113,9 +156,11 @@ class Namespace(str):
     >>> n2 = Namespace("http://example2.org/")
     >>> n.Person in n2
     False
+
+    ```
     """
 
-    def __new__(cls, value: Union[str, bytes]) -> "Namespace":
+    def __new__(cls, value: Union[str, bytes]) -> Namespace:
         try:
             rt = str.__new__(cls, value)
         except UnicodeDecodeError:
@@ -146,6 +191,7 @@ class Namespace(str):
     def __contains__(self, ref: str) -> bool:  # type: ignore[override]
         """Allows to check if a URI is within (starts with) this Namespace.
 
+        ```python
         >>> from rdflib import URIRef
         >>> namespace = Namespace('http://example.org/')
         >>> uri = URIRef('http://example.org/foo')
@@ -157,23 +203,27 @@ class Namespace(str):
         >>> obj = URIRef('http://not.example.org/bar')
         >>> obj in namespace
         False
+
+        ```
         """
         return ref.startswith(self)  # test namespace membership with "ref in ns" syntax
 
 
 class URIPattern(str):
-    """
-    Utility class for creating URIs according to some pattern
-    This supports either new style formatting with .format
-    or old-style with % operator
+    """Utility class for creating URIs according to some pattern.
 
+    This supports either new style formatting with .format
+    or old-style with % operator.
+
+    ```python
     >>> u=URIPattern("http://example.org/%s/%d/resource")
     >>> u%('books', 12345)
     rdflib.term.URIRef('http://example.org/books/12345/resource')
 
+    ```
     """
 
-    def __new__(cls, value: Union[str, bytes]) -> "URIPattern":
+    def __new__(cls, value: Union[str, bytes]) -> URIPattern:
         try:
             rt = str.__new__(cls, value)
         except UnicodeDecodeError:
@@ -197,6 +247,7 @@ class URIPattern(str):
 # considered part of __dir__ results. These should be all annotations on
 # `DefinedNamespaceMeta`.
 _DFNS_RESERVED_ATTRS: Set[str] = {
+    "__slots__",
     "_NS",
     "_warn",
     "_fail",
@@ -204,9 +255,18 @@ _DFNS_RESERVED_ATTRS: Set[str] = {
     "_underscore_num",
 }
 
+# Some libraries probe classes for certain attributes or items.
+# This is a list of those attributes and items that should be ignored.
+_IGNORED_ATTR_LOOKUP: Set[str] = {
+    "_pytestfixturefunction",  # pytest tries to look this up on Defined namespaces
+    "_partialmethod",  # sphinx tries to look this up during autodoc generation
+}
+
 
 class DefinedNamespaceMeta(type):
     """Utility metaclass for generating URIRefs with a common prefix."""
+
+    __slots__: Tuple[str, ...] = tuple()
 
     _NS: Namespace
     _warn: bool = True
@@ -217,14 +277,13 @@ class DefinedNamespaceMeta(type):
     @lru_cache(maxsize=None)
     def __getitem__(cls, name: str, default=None) -> URIRef:
         name = str(name)
+
         if name in _DFNS_RESERVED_ATTRS:
-            raise AttributeError(
-                f"DefinedNamespace like object has no attribute {name!r}"
+            raise KeyError(
+                f"DefinedNamespace like object has no access item named {name!r}"
             )
-        if str(name).startswith("__"):
-            # NOTE on type ignore: This seems to be a real bug, super() does not
-            # implement this method, it will fail if it is ever reached.
-            return super().__getitem__(name, default)  # type: ignore[misc] # undefined in superclass
+        elif name in _IGNORED_ATTR_LOOKUP:
+            raise KeyError()
         if (cls._warn or cls._fail) and name not in cls:
             if cls._fail:
                 raise AttributeError(f"term '{name}' not in namespace '{cls._NS}'")
@@ -236,28 +295,43 @@ class DefinedNamespaceMeta(type):
         return cls._NS[name]
 
     def __getattr__(cls, name: str):
+        if name in _IGNORED_ATTR_LOOKUP:
+            raise AttributeError()
+        elif name in _DFNS_RESERVED_ATTRS:
+            raise AttributeError(
+                f"DefinedNamespace like object has no attribute {name!r}"
+            )
+        elif name.startswith("__"):
+            return super(DefinedNamespaceMeta, cls).__getattribute__(name)
         return cls.__getitem__(name)
 
     def __repr__(cls) -> str:
-        return f"Namespace({str(cls._NS)!r})"
+        try:
+            ns_repr = repr(cls._NS)
+        except AttributeError:
+            ns_repr = "<DefinedNamespace>"
+        return f"Namespace({ns_repr})"
 
     def __str__(cls) -> str:
-        return str(cls._NS)
+        try:
+            return str(cls._NS)
+        except AttributeError:
+            return "<DefinedNamespace>"
 
     def __add__(cls, other: str) -> URIRef:
         return cls.__getitem__(other)
 
     def __contains__(cls, item: str) -> bool:
         """Determine whether a URI or an individual item belongs to this namespace"""
+        try:
+            this_ns = cls._NS
+        except AttributeError:
+            return False
         item_str = str(item)
-        if item_str.startswith("__"):
-            # NOTE on type ignore: This seems to be a real bug, super() does not
-            # implement this method, it will fail if it is ever reached.
-            return super().__contains__(item)  # type: ignore[misc] # undefined in superclass
-        if item_str.startswith(str(cls._NS)):
-            item_str = item_str[len(str(cls._NS)) :]
+        if item_str.startswith(str(this_ns)):
+            item_str = item_str[len(str(this_ns)) :]
         return any(
-            item_str in c.__annotations__
+            item_str in get_annotations(c)
             or item_str in c._extras
             or (cls._underscore_num and item_str[0] == "_" and item_str[1:].isdigit())
             for c in cls.mro()
@@ -265,16 +339,16 @@ class DefinedNamespaceMeta(type):
         )
 
     def __dir__(cls) -> Iterable[str]:
-        attrs = {str(x) for x in cls.__annotations__}
+        attrs = {str(x) for x in get_annotations(cls)}
         # Removing these as they should not be considered part of the namespace.
         attrs.difference_update(_DFNS_RESERVED_ATTRS)
         values = {cls[str(x)] for x in attrs}
         return values
 
-    def as_jsonld_context(self, pfx: str) -> dict:
-        """Returns this DefinedNamespace as a a JSON-LD 'context' object"""
+    def as_jsonld_context(self, pfx: str) -> dict:  # noqa: N804
+        """Returns this DefinedNamespace as a JSON-LD 'context' object"""
         terms = {pfx: str(self._NS)}
-        for key, term in self.__annotations__.items():
+        for key, term in get_annotations(self).items():
             if issubclass(term, URIRef):
                 terms[key] = f"{pfx}:{key}"
 
@@ -282,10 +356,12 @@ class DefinedNamespaceMeta(type):
 
 
 class DefinedNamespace(metaclass=DefinedNamespaceMeta):
+    """A Namespace with an enumerated list of members.
+
+    Warnings are emitted if unknown members are referenced if _warn is True.
     """
-    A Namespace with an enumerated list of members.
-    Warnings are emitted if unknown members are referenced if _warn is True
-    """
+
+    __slots__: Tuple[str, ...] = tuple()
 
     def __init__(self):
         raise TypeError("namespace may not be instantiated")
@@ -350,7 +426,7 @@ if TYPE_CHECKING:
 _with_bind_override_fix = True
 
 
-class NamespaceManager(object):
+class NamespaceManager:
     """Class for managing prefix => namespace mappings
 
     This class requires an RDFlib Graph as an input parameter and may optionally have
@@ -374,35 +450,32 @@ class NamespaceManager(object):
         * using prefix bindings from prefix.cc which is a online prefixes database
         * not implemented yet - this is aspirational
 
-    .. attention::
+    !!! warning "Breaking changes"
 
-        The namespaces bound for specific values of ``bind_namespaces``
+        The namespaces bound for specific values of `bind_namespaces`
         constitute part of RDFLib's public interface, so changes to them should
         only be additive within the same minor version. Removing values, or
         removing namespaces that are bound by default, constitutes a breaking
         change.
 
-    See the
-    Sample usage
+    See the sample usage
 
-    .. code-block:: pycon
+    ```python
+    >>> import rdflib
+    >>> from rdflib import Graph
+    >>> from rdflib.namespace import Namespace, NamespaceManager
+    >>> EX = Namespace('http://example.com/')
+    >>> namespace_manager = NamespaceManager(Graph())
+    >>> namespace_manager.bind('ex', EX, override=False)
+    >>> g = Graph()
+    >>> g.namespace_manager = namespace_manager
+    >>> all_ns = [n for n in g.namespace_manager.namespaces()]
+    >>> assert ('ex', rdflib.term.URIRef('http://example.com/')) in all_ns
 
-        >>> import rdflib
-        >>> from rdflib import Graph
-        >>> from rdflib.namespace import Namespace, NamespaceManager
-        >>> EX = Namespace('http://example.com/')
-        >>> namespace_manager = NamespaceManager(Graph())
-        >>> namespace_manager.bind('ex', EX, override=False)
-        >>> g = Graph()
-        >>> g.namespace_manager = namespace_manager
-        >>> all_ns = [n for n in g.namespace_manager.namespaces()]
-        >>> assert ('ex', rdflib.term.URIRef('http://example.com/')) in all_ns
-        >>>
+    ```
     """
 
-    def __init__(
-        self, graph: "Graph", bind_namespaces: "_NamespaceSetString" = "rdflib"
-    ):
+    def __init__(self, graph: Graph, bind_namespaces: _NamespaceSetString = "rdflib"):
         self.graph = graph
         self.__cache: Dict[str, Tuple[str, URIRef, str]] = {}
         self.__cache_strict: Dict[str, Tuple[str, URIRef, str]] = {}
@@ -454,7 +527,7 @@ class NamespaceManager(object):
             insert_trie(self.__trie, str(n))
 
     @property
-    def store(self) -> "Store":
+    def store(self) -> Store:
         return self.graph.store
 
     def qname(self, uri: str) -> str:
@@ -464,6 +537,39 @@ class NamespaceManager(object):
         else:
             return ":".join((prefix, name))
 
+    def curie(self, uri: str, generate: bool = True) -> str:
+        """
+        From a URI, generate a valid CURIE.
+
+        Result is guaranteed to contain a colon separating the prefix from the
+        name, even if the prefix is an empty string.
+
+        !!! warning "Side-effect"
+            When `generate` is `True` (which is the default) and there is no
+            matching namespace for the URI in the namespace manager then a new
+            namespace will be added with prefix `ns{index}`.
+
+            Thus, when `generate` is `True`, this function is not a pure
+            function because of this side-effect.
+
+            This default behaviour is chosen so that this function operates
+            similarly to `NamespaceManager.qname`.
+
+        Args:
+            uri: URI to generate CURIE for.
+            generate: Whether to add a prefix for the namespace if one doesn't
+                already exist.  Default: `True`.
+
+        Returns:
+            CURIE for the URI
+
+        Raises:
+            KeyError: If generate is `False` and the namespace doesn't already have
+                a prefix.
+        """
+        prefix, namespace, name = self.compute_qname(uri, generate=generate)
+        return ":".join((prefix, name))
+
     def qname_strict(self, uri: str) -> str:
         prefix, namespace, name = self.compute_qname_strict(uri)
         if prefix == "":
@@ -471,7 +577,7 @@ class NamespaceManager(object):
         else:
             return ":".join((prefix, name))
 
-    def normalizeUri(self, rdfTerm: str) -> str:
+    def normalizeUri(self, rdfTerm: str) -> str:  # noqa: N802, N803
         """
         Takes an RDF Term and 'normalizes' it into a QName (using the
         registered prefix) or (unlike compute_qname) the Notation 3
@@ -482,7 +588,7 @@ class NamespaceManager(object):
             if namespace not in self.__strie:
                 insert_strie(self.__strie, self.__trie, str(namespace))
             namespace = URIRef(str(namespace))
-        except:
+        except Exception:
             if isinstance(rdfTerm, Variable):
                 return "?%s" % rdfTerm
             else:
@@ -493,7 +599,7 @@ class NamespaceManager(object):
         elif prefix is None:
             return "<%s>" % rdfTerm
         else:
-            qNameParts = self.compute_qname(rdfTerm)
+            qNameParts = self.compute_qname(rdfTerm)  # noqa: N806
             return ":".join([qNameParts[0], qNameParts[-1]])
 
     def compute_qname(self, uri: str, generate: bool = True) -> Tuple[str, URIRef, str]:
@@ -614,10 +720,10 @@ class NamespaceManager(object):
         Raises exception if a namespace is not bound to the prefix.
 
         """
-        if not type(curie) is str:
+        if not type(curie) is str:  # noqa: E714
             raise TypeError(f"Argument must be a string, not {type(curie).__name__}.")
         parts = curie.split(":", 1)
-        if len(parts) != 2 or len(parts[0]) < 1:
+        if len(parts) != 2:
             raise ValueError(
                 "Malformed curie argument, format should be e.g. “foaf:name”."
             )
@@ -636,7 +742,7 @@ class NamespaceManager(object):
             return self.store.bind(prefix, namespace, override=override)
         except TypeError as error:
             if "override" in str(error):
-                logger.warning(
+                logger.debug(
                     "caught a TypeError, "
                     "retrying call to %s.bind without override, "
                     "see https://github.com/RDFLib/rdflib/issues/1880 for more info",
@@ -658,7 +764,6 @@ class NamespaceManager(object):
         bound to another prefix.
 
         If replace, replace any existing prefix with the new namespace
-
         """
 
         namespace = URIRef(str(namespace))
@@ -781,7 +886,7 @@ def is_ncname(name: str) -> int:
         if first == "_" or category(first) in NAME_START_CATEGORIES:
             for i in range(1, len(name)):
                 c = name[i]
-                if not category(c) in NAME_CATEGORIES:
+                if not category(c) in NAME_CATEGORIES:  # noqa: E713
                     if c in ALLOWED_NAME_CHARS:
                         continue
                     return 0
@@ -802,7 +907,7 @@ def split_uri(
     length = len(uri)
     for i in range(0, length):
         c = uri[-i - 1]
-        if not category(c) in NAME_CATEGORIES:
+        if not category(c) in NAME_CATEGORIES:  # noqa: E713
             if c in ALLOWED_NAME_CHARS:
                 continue
             for j in range(-1 - i, length):

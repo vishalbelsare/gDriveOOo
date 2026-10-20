@@ -4,7 +4,7 @@
 """
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -30,187 +30,60 @@
 import uno
 import unohelper
 
-from com.sun.star.container import XIndexAccess
-from com.sun.star.sdb import XInteractionSupplyParameters
+from com.sun.star.sdbc import XCloseable
 from com.sun.star.sdbc import XRow
 from com.sun.star.sdbc import XResultSet
 from com.sun.star.sdbc import XResultSetMetaDataSupplier
-from com.sun.star.task import XInteractionRequest
-from com.sun.star.task import XInteractionAbort
 from com.sun.star.ucb import XContentAccess
 from com.sun.star.ucb import XDynamicResultSet
 from com.sun.star.ucb import XCommandInfo
 from com.sun.star.ucb import XCommandInfoChangeNotifier
 from com.sun.star.ucb import UnsupportedCommandException
 
-from ..oauth2 import g_oauth2
+from .identifier import Identifier
 
 from ..unolib import PropertySet
 
 from ..unotool import getProperty
 
-from .contenthelper import getParametersRequest
+from ..helper import getParametersRequest
 
 import traceback
-
-
-class NoOAuth2(object):
-    def __eq__(self, other):
-        return False
-
-    def __ne__(self, other):
-        return not self == other
-
-    def __call__(self, request):
-        return request
-
-
-class OAuth2OOo(NoOAuth2):
-    def __init__(self, ctx, scheme, username=None):
-        self.service = ctx.ServiceManager.createInstanceWithContext(g_oauth2, ctx)
-        self.service.ResourceUrl = scheme
-        if username is not None:
-            self.service.UserName = username
-
-    @property
-    def UserName(self):
-        return self.service.UserName
-    @UserName.setter
-    def UserName(self, username):
-        self.service.UserName = username
-    @property
-    def Scheme(self):
-        return self.service.ResourceUrl
-
-    def __eq__(self, other):
-        return all((self.UserName == getattr(other, 'UserName', None),
-                    self.Scheme == getattr(other, 'Scheme', None)))
-
-    def __call__(self, r):
-        r.headers['Authorization'] = self.service.getToken('Bearer %s')
-        return r
-
-
-class InteractionAbort(unohelper.Base,
-                       XInteractionAbort):
-    # XInteractionAbort
-    def select(self):
-        pass
-
-
-class InteractionSupplyParameters(unohelper.Base,
-                                  XInteractionSupplyParameters):
-    def __init__(self, result):
-        self._result = result
-        self._username = ''
-    # XInteractionSupplyParameters
-    def setParameters(self, properties):
-        for property in properties:
-            if property.Name == 'UserName':
-                self._username = property.Value
-    def select(self):
-        self._result.Value = self._username
-        self._result.IsPresent = True
-
-
-class InteractionRequestParameters(unohelper.Base,
-                                   XInteractionRequest):
-    def __init__(self, source, connection, message, result):
-        self.request = getParametersRequest(source, connection, message)
-        self.request.Parameters = RequestParameters(message)
-        self.continuations = (InteractionSupplyParameters(result), InteractionAbort())
-    # XInteractionRequest
-    def getRequest(self):
-        return self.request
-    def getContinuations(self):
-        return self.continuations
-
-
-class RequestParameters(unohelper.Base,
-                        XIndexAccess):
-    def __init__(self, description):
-        self.description = description
-    # XIndexAccess
-    def getCount(self):
-        return 1
-    def getByIndex(self, index):
-        return Parameters(self.description)
-    def getElementType(self):
-        return uno.getTypeByName('string')
-    def hasElements(self):
-        return True
-
-
-class Parameters(unohelper.Base,
-                 PropertySet):
-    def __init__(self, description):
-        self.Name = 'UserName'
-        self.Type = uno.getConstantByName('com.sun.star.sdbc.DataType.VARCHAR')
-        self.TypeName = 'VARCHAR'
-        self.Precision = 0
-        self.Scale = 0
-        self.IsNullable = uno.getConstantByName('com.sun.star.sdbc.ColumnValue.NO_NULLS')
-        self.IsAutoIncrement = False
-        self.IsCurrency = False
-        self.IsRowVersion = False
-        self.Description = description
-        self.DefaultValue = ''
-    def _getPropertySetInfo(self):
-        properties = {}
-        bound = uno.getConstantByName('com.sun.star.beans.PropertyAttribute.BOUND')
-        readonly = uno.getConstantByName('com.sun.star.beans.PropertyAttribute.READONLY')
-        properties['Name'] = getProperty('Name', 'string', bound | readonly)
-        properties['Type'] = getProperty('Type', 'long', bound | readonly)
-        properties['TypeName'] = getProperty('TypeName', 'string', bound | readonly)
-        properties['Precision'] = getProperty('Precision', 'long', bound | readonly)
-        properties['Scale'] = getProperty('Scale', 'long', bound | readonly)
-        properties['IsNullable'] = getProperty('IsNullable', 'long', bound | readonly)
-        properties['IsAutoIncrement'] = getProperty('IsAutoIncrement', 'boolean', bound | readonly)
-        properties['IsCurrency'] = getProperty('IsCurrency', 'boolean', bound | readonly)
-        properties['IsRowVersion'] = getProperty('IsRowVersion', 'boolean', bound | readonly)
-        properties['Description'] = getProperty('Description', 'string', bound | readonly)
-        properties['DefaultValue'] = getProperty('DefaultValue', 'string', bound | readonly)
-        return properties
 
 
 class CommandInfo(unohelper.Base,
                   XCommandInfo):
     def __init__(self, commands={}):
         self.commands = commands
-        print("CommandInfo.__init__()")
+
     # XCommandInfo
     def getCommands(self):
-        print("CommandInfo.getCommands()")
         return tuple(self.commands.values())
     def getCommandInfoByName(self, name):
-        print("CommandInfo.getCommandInfoByName(): %s" % name)
         if name in self.commands:
             return self.commands[name]
-        print("CommandInfo.getCommandInfoByName() Error: %s" % name)
         msg = 'Cant getCommandInfoByName, UnsupportedCommandException: %s' % name
         raise UnsupportedCommandException(msg, self)
     def getCommandInfoByHandle(self, handle):
-        print("CommandInfo.getCommandInfoByHandle(): %s" % handle)
         for command in self.commands.values():
             if command.Handle == handle:
                 return command
-        print("CommandInfo.getCommandInfoByHandle() Error: %s" % handle)
         msg = 'Cant getCommandInfoByHandle, UnsupportedCommandException: %s' % handle
         raise UnsupportedCommandException(msg, self)
     def hasCommandByName(self, name):
-        print("CommandInfo.hasCommandByName(): %s" % name)
         return name in self.commands
     def hasCommandByHandle(self, handle):
-        print("CommandInfo.hasCommandByHandle(): %s" % handle)
         for command in self.commands.values():
             if command.Handle == handle:
                 return True
         return False
 
 
-class CommandInfoChangeNotifier(XCommandInfoChangeNotifier):
+class CommandInfoChangeNotifier(unohelper.Base,
+                                XCommandInfoChangeNotifier):
     def __init__(self):
         self.commandInfoListeners = []
+
     # XCommandInfoChangeNotifier
     def addCommandInfoChangeListener(self, listener):
         self.commandInfoListeners.append(listener)
@@ -278,15 +151,15 @@ class Row(unohelper.Base,
 
 class DynamicResultSet(unohelper.Base,
                        XDynamicResultSet):
-    def __init__(self, user, path, authority, select):
+    def __init__(self, user, authority, call):
         self._user = user
-        self._path = path
         self._authority = authority
-        self._select = select
+        self._call = call
+        self._listeners = []
 
     # XDynamicResultSet
     def getStaticResultSet(self):
-        return ContentResultSet(self._user, self._path, self._authority, self._select)
+        return ContentResultSet(self._user, self._authority, self._call)
     def setListener(self, listener):
         pass
     def connectToCache(self, cache):
@@ -294,28 +167,37 @@ class DynamicResultSet(unohelper.Base,
     def getCapabilities(self):
         return uno.getConstantByName('com.sun.star.ucb.ContentResultSetCapability.SORTED')
 
+    # XComponent
+    def dispose(self):
+        event = uno.createUnoStruct('com.sun.star.lang.EventObject')
+        event.Source = self
+        for listener in self._listeners:
+            listener.disposing(event)
+
+    def addEventListener(self, listener):
+        self._listeners.append(listener)
+
+    def removeEventListener(self, listener):
+        if listener in self._listeners:
+            self._listeners.remove(listener)
+
 
 class ContentResultSet(unohelper.Base,
                        PropertySet,
                        XResultSet,
                        XRow,
                        XResultSetMetaDataSupplier,
-                       XContentAccess):
-    def __init__(self, user, path, authority, select):
-        try:
-            self._user = user
-            self._path = path
-            self._authority = authority
-            result = select.executeQuery()
-            result.last()
-            self.RowCount = result.getRow()
-            self.IsRowCountFinal = True
-            result.beforeFirst()
-            self._result = result
-            print("ContentResultSet.__init__() %s" % self.RowCount)
-        except Exception as e:
-            msg = "Error: %s" % traceback.print_exc()
-            print(msg)
+                       XContentAccess,
+                       XCloseable):
+    def __init__(self, user, authority, call):
+        self._user = user
+        self._authority = authority
+        result = call.executeQuery()
+        result.last()
+        self.RowCount = result.getRow()
+        self.IsRowCountFinal = True
+        result.beforeFirst()
+        self._result = result
 
     # XResultSet
     def next(self):
@@ -405,16 +287,21 @@ class ContentResultSet(unohelper.Base,
     def queryContentIdentifierString(self):
         return  self._result.getString(self._result.findColumn('TargetURL'))
     def queryContentIdentifier(self):
-        return ContentIdentifier(self.queryContentIdentifierString())
+        return Identifier(self.queryContentIdentifierString())
     def queryContent(self):
-        title = self._result.getString(self._result.findColumn('Title'))
-        path = self._user.getContentPath(self._path, title)
-        return self._user.getContent(path, self._authority)
+        url = self.queryContentIdentifierString()
+        return self._user.getContentByUrl(self._authority, url)
+
+    # XCloseable
+    def close(self):
+        call = self._result.getStatement()
+        self._result.close()
+        call.close()
 
     def _getPropertySetInfo(self):
         properties = {}
         readonly = uno.getConstantByName('com.sun.star.beans.PropertyAttribute.READONLY')
-        properties['RowCount'] = getProperty('RowCount', 'long', readonly)
+        properties['RowCount'] =        getProperty('RowCount',        'long',    readonly)
         properties['IsRowCountFinal'] = getProperty('IsRowCountFinal', 'boolean', readonly)
         return properties
 

@@ -4,7 +4,7 @@
 """
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -31,9 +31,9 @@ import unohelper
 
 from com.sun.star.view.SelectionType import MULTI
 
-from ..unotool import getContainerWindow
+from ...unotool import getContainerWindow
 
-from ..configuration import g_extension
+from ...configuration import g_identifier
 
 
 class GridView(unohelper.Base):
@@ -41,7 +41,7 @@ class GridView(unohelper.Base):
         self._name = 'GridControl1'
         self._gap = 20
         self._margin = 10
-        self._window = getContainerWindow(ctx, window.getPeer(), handler, g_extension, 'GridWindow')
+        self._window = getContainerWindow(ctx, window.getPeer(), handler, g_identifier, 'GridWindow')
         self._setWindowSize(window.Model, step)
         self._createGrid(model, selection)
         self._window.setVisible(True)
@@ -52,12 +52,6 @@ class GridView(unohelper.Base):
 
     def getGrid(self):
         return self._getGrid()
-
-    def getGridDataModel(self):
-        return self._getGrid().Model.GridDataModel
-
-    def getGridColumnModel(self):
-        return self._getGrid().Model.ColumnModel
 
     def hasSelectedRows(self):
         return self._getGrid().hasSelectedRows()
@@ -72,22 +66,32 @@ class GridView(unohelper.Base):
     def getSelectedRows(self):
         return self._getGrid().getSelectedRows()
 
-    def getUnSelected(self):
-        return 'column-0.png'
-
-    def getSelected(self):
-        return 'column-1.png'
+    def getSelectedColumn(self, index):
+        control = self._getColumn()
+        control.selectItemPos(index, False)
+        identifier = control.Model.getItemData(index)
+        add = self._isUnSelectedUrl(control.Model.getItemImage(index))
+        for i in range(control.Model.ItemCount):
+            if i != index and self._isSelectedUrl(control.Model.getItemImage(i)):
+                reset = False
+                break
+        else:
+            reset = True
+        return identifier, add, reset
 
 # GridView setter methods
     def setGridVisible(self, enabled):
         self._getGrid().setVisible(enabled)
 
-    def showControls(self, state):
+    def showColumns(self, state):
         control = self._getGrid()
         control.setVisible(False)
-        self._setGridPosSize(control.Model, state)
-        self._window.Model.Step = state +1
+        self._setGridPosSize(control.Model, state, self._gap)
+        self._window.Model.Step = state + 1
         control.setVisible(True)
+
+    def enableColumnSelection(self, enabled):
+        self._getColumn().Model.Enabled = enabled
 
     def addSelectionListener(self, listener):
         self._getGrid().addSelectionListener(listener)
@@ -97,10 +101,10 @@ class GridView(unohelper.Base):
 
     def initColumns(self, url, columns, identifiers):
         control = self._getColumn()
-        unselected = self._getUnSelected(url)
+        unselected = self._getUnSelectedUrl(url)
         self._initListBox(control, columns, unselected)
         indexes = tuple(columns.keys())
-        selected = self._getSelected(url)
+        selected = self._getSelectedUrl(url)
         for identifier in identifiers:
             index = indexes.index(identifier)
             control.Model.setItemImage(index, selected)
@@ -108,13 +112,10 @@ class GridView(unohelper.Base):
     def deselectAllRows(self):
         self._getGrid().deselectAllRows()
 
-    def deselectColumn(self, index):
-        self._getColumn().selectItemPos(index, False)
-
     def setColumns(self, url, identifiers):
         control = self._getColumn()
-        selected = self._getSelected(url)
-        unselected = self._getUnSelected(url)
+        selected = self._getSelectedUrl(url)
+        unselected = self._getUnSelectedUrl(url)
         for index in range(control.Model.ItemCount):
             identifier = control.Model.getItemData(index)
             if identifier in identifiers:
@@ -123,8 +124,8 @@ class GridView(unohelper.Base):
                 control.Model.setItemImage(index, unselected)
 
 # GridView private setter methods
-    def _setGridPosSize(self, model, state):
-        gap = self._gap if state else -self._gap
+    def _setGridPosSize(self, model, state, offset):
+        gap = offset if state else -offset
         model.PositionY = model.PositionY + gap
         model.Height = model.Height - gap
 
@@ -152,11 +153,23 @@ class GridView(unohelper.Base):
         self._window.Model.insertByName(self._name, model)
 
 # GridView private getter methods
-    def _getUnSelected(self, url):
-        return '%s/%s' % (url, self.getUnSelected())
+    def _getUnSelectedUrl(self, url):
+        return '%s/%s' % (url, self._getUnSelectedImage())
 
-    def _getSelected(self, url):
-        return '%s/%s' % (url,  self.getSelected())
+    def _getSelectedUrl(self, url):
+        return '%s/%s' % (url,  self._getSelectedImage())
+
+    def _isUnSelectedUrl(self, url):
+        return url.endswith(self._getUnSelectedImage())
+
+    def _isSelectedUrl(self, url):
+        return url.endswith(self._getSelectedImage())
+
+    def _getUnSelectedImage(self):
+        return 'column-0.png'
+
+    def _getSelectedImage(self):
+        return 'column-1.png'
 
     def _getGridModel(self, data, selection):
         margin = self._getToggle().Model.Width
@@ -168,7 +181,6 @@ class GridView(unohelper.Base):
         model.Height = self._window.Model.Height
         model.Width = self._window.Model.Width - margin
         model.GridDataModel = data
-        #model.ColumnModel = column
         model.SelectionModel = selection
         model.HScroll = True
         model.VScroll = True

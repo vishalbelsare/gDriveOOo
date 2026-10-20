@@ -1,22 +1,21 @@
-from __future__ import unicode_literals, print_function, absolute_import, division, generators, nested_scopes
 import sys
 import logging
 
-import ply.lex
+import jsonpath_ng._ply.lex
 
 from jsonpath_ng.exceptions import JsonPathLexerError
 
 logger = logging.getLogger(__name__)
 
 
-class JsonPathLexer(object):
+class JsonPathLexer:
     '''
     A Lexical analyzer for JsonPath.
     '''
 
     def __init__(self, debug=False):
         self.debug = debug
-        if self.__doc__ == None:
+        if self.__doc__ is None:
             raise JsonPathLexerError('Docstrings have been removed! By design of PLY, jsonpath-rw requires docstrings. You must not use PYTHONOPTIMIZE=2 or python -OO.')
 
     def tokenize(self, string):
@@ -24,14 +23,15 @@ class JsonPathLexer(object):
         Maps a string to an iterator over tokens. In other words: [char] -> [token]
         '''
 
-        new_lexer = ply.lex.lex(module=self, debug=self.debug, errorlog=logger)
+        new_lexer = jsonpath_ng._ply.lex.lex(module=self, debug=self.debug, errorlog=logger)
         new_lexer.latest_newline = 0
         new_lexer.string_value = None
         new_lexer.input(string)
 
         while True:
             t = new_lexer.token()
-            if t is None: break
+            if t is None:
+                break
             t.col = t.lexpos - new_lexer.latest_newline
             yield t
 
@@ -48,7 +48,10 @@ class JsonPathLexer(object):
 
     literals = ['*', '.', '[', ']', '(', ')', '$', ',', ':', '|', '&', '~']
 
-    reserved_words = { 'where': 'WHERE' }
+    reserved_words = {
+        'where': 'WHERE',
+        'wherenot': 'WHERENOT',
+    }
 
     tokens = ['DOUBLEDOT', 'NUMBER', 'ID', 'NAMED_OPERATOR'] + list(reserved_words.values())
 
@@ -61,7 +64,9 @@ class JsonPathLexer(object):
     t_ignore = ' \t'
 
     def t_ID(self, t):
-        r'[a-zA-Z_@][a-zA-Z0-9_@\-]*'
+        # CJK: [\u4E00-\u9FA5]
+        # EMOJI: [\U0001F600-\U0001F64F]
+        r'([a-zA-Z_@]|[\u4E00-\u9FA5]|[\U0001F600-\U0001F64F])([a-zA-Z0-9_@\-]|[\u4E00-\u9FA5]|[\U0001F600-\U0001F64F])*'
         t.type = self.reserved_words.get(t.value, 'ID')
         return t
 

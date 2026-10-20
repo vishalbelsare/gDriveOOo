@@ -1,16 +1,21 @@
+from __future__ import annotations
+
 import re
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any
 
 from lxml import etree
-
 from w3lib.html import HTML5_WHITESPACE
 
+from .selector import _compile_xpath
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 regex = f"[{HTML5_WHITESPACE}]+"
 replace_html5_whitespaces = re.compile(regex).sub
 
 
-def set_xpathfunc(fname: str, func: Optional[Callable]) -> None:  # type: ignore[type-arg]
+def set_xpathfunc(fname: str, func: Callable | None) -> None:  # type: ignore[type-arg]
     """Register a custom extension function to use in XPath expressions.
 
     The function ``func`` registered under ``fname`` identifier will be called
@@ -24,11 +29,14 @@ def set_xpathfunc(fname: str, func: Optional[Callable]) -> None:  # type: ignore
     .. _`in lxml documentation`: https://lxml.de/extensions.html#xpath-extension-functions
 
     """
-    ns_fns = etree.FunctionNamespace(None)  # type: ignore[attr-defined]
+    ns_fns = etree.FunctionNamespace(None)
     if func is not None:
         ns_fns[fname] = func
     else:
         del ns_fns[fname]
+        # Compiled expressions keep resolving functions that were registered
+        # when they were first evaluated.
+        _compile_xpath.cache_clear()
 
 
 def setup() -> None:
@@ -43,14 +51,10 @@ def has_class(context: Any, *classes: str) -> bool:
     """
     if not context.eval_context.get("args_checked"):
         if not classes:
-            raise ValueError(
-                "XPath error: has-class must have at least 1 argument"
-            )
+            raise ValueError("XPath error: has-class must have at least 1 argument")
         for c in classes:
             if not isinstance(c, str):
-                raise ValueError(
-                    "XPath error: has-class arguments must be strings"
-                )
+                raise ValueError("XPath error: has-class arguments must be strings")
         context.eval_context["args_checked"] = True
 
     node_cls = context.context_node.get("class")
@@ -58,7 +62,4 @@ def has_class(context: Any, *classes: str) -> bool:
         return False
     node_cls = " " + node_cls + " "
     node_cls = replace_html5_whitespaces(" ", node_cls)
-    for cls in classes:
-        if " " + cls + " " not in node_cls:
-            return False
-    return True
+    return all(" " + cls + " " in node_cls for cls in classes)

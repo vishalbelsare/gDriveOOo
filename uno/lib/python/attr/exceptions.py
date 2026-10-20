@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: MIT
 
+from __future__ import annotations
+
 
 class FrozenError(AttributeError):
     """
@@ -12,8 +14,10 @@ class FrozenError(AttributeError):
     .. versionadded:: 20.1.0
     """
 
-    msg = "can't set attribute"
-    args = [msg]
+    def __init__(self):
+        msg = "can't set attribute"
+        super().__init__(msg)
+        self.msg = msg
 
 
 class FrozenInstanceError(FrozenError):

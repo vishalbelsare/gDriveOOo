@@ -4,7 +4,7 @@
 """
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -27,77 +27,99 @@
 ╚════════════════════════════════════════════════════════════════════════════════════╝
 """
 
-import uno
-import unohelper
-
-from com.sun.star.util import XCloseListener
-from com.sun.star.util import CloseVetoException
-
 from com.sun.star.logging.LogLevel import INFO
 from com.sun.star.logging.LogLevel import SEVERE
 
 from com.sun.star.ucb import IllegalIdentifierException
 
-from .oauth2 import getOAuth2UserName
+from .database import DataBase
 
-from .unotool import createService
-
-from .ucp import ContentUser
+from .listener import CloseListener
 
 from .provider import Provider
 
 from .replicator import Replicator
+
+from .ucp import User
+
+from .oauth20 import getOAuth2UserName
+
+from .dbinit import getDataBaseUrl
+from .dbinit import getDataSourceUrl
+
+from .helper import getExceptionMessage
+from .helper import showWarning
+
+from .unotool import getUriFactory
+
+from .configuration import g_extension
 
 from threading import Event
 from threading import Lock
 import traceback
 
 
-class DataSource(unohelper.Base,
-                 XCloseListener):
-    def __init__(self, ctx, logger, database):
+class DataSource():
+    def __init__(self, ctx, logger):
+        cls, mtd = 'DataSource', '__init__'
+        logger.logprb(INFO, cls, mtd, 301)
         self._ctx = ctx
         self._default = ''
         self._users = {}
-        self._logger = logger
-        self.Error = None
         self._sync = Event()
         self._lock = Lock()
-        self._factory = createService(ctx, 'com.sun.star.uri.UriReferenceFactory')
-        database.addCloseListener(self)
-        folder, link = database.getContentType()
-        self._provider = Provider(ctx, logger, folder, link)
-        self.Replicator = Replicator(ctx, database.Url, self._provider, self._users, self._sync, self._lock)
-        self.DataBase = database
-        self._logger.logprb(INFO, 'DataSource', '__init__()', 301)
+        self._urifactory = getUriFactory(ctx)
+        url = getDataSourceUrl(ctx)
+        self._database = DataBase(ctx, url)
+        self._provider = Provider(ctx, logger)
+        self._replicator = Replicator(ctx, url, self._provider, self._users, self._sync, self._lock)
+        self._logger = logger
+        self._database.addCloseListener(CloseListener(self))
+        logger.logprb(INFO, cls, mtd, 302)
 
-    # DataSource
+    @property
+    def DataBase(self):
+        return self._database
+    @property
+    def Replicator(self):
+        return self._replicator
+
+    # called from XCloseListener
+    def dispose(self):
+        try:
+            if self.Replicator.is_alive():
+                self.Replicator.cancel()
+            for user in self._users.values():
+                user.dispose()
+            self.DataBase.shutdownDataBase(self.Replicator.fullPull())
+            self._logger.logprb(INFO, 'DataSource', 'dispose', 341, self._provider.Scheme)
+        except Exception as e:
+            self._logger.logprb(SEVERE, 'DataSource', 'dispose', 342, e, traceback.format_exc())
+
+    # Get called from ContentProvider.queryContent()
+    def queryContent(self, source, authority, url):
+        user, uri = self._getUser(source, authority, url)
+        if uri is None:
+            msg = self._logger.resolveString(311, url)
+            raise IllegalIdentifierException(msg, source)
+        user.setLock()
+        content = user.getContentByUri(authority, uri)
+        if content is None:
+            msg = self._logger.resolveString(311, url)
+            raise IllegalIdentifierException(msg, source)
+        return content
+
+    # Get called from ContentProvider.compareContentIds()
     def getDefaultUser(self):
         return self._default
 
-    # FIXME: Get called from ParameterizedProvider.queryContent()
-    def queryContent(self, source, authority, identifier):
-        user, path = self._getUser(source, identifier.getContentIdentifier(), authority)
-        content = user.getContent(path, authority)
-        return content
-
-    # XCloseListener
-    def queryClosing(self, source, ownership):
-        if ownership:
-            raise CloseVetoException('cant close', self)
-        print("DataSource.queryClosing() ownership: %s" % ownership)
-        if self.Replicator.is_alive():
-            self.Replicator.cancel()
-            self.Replicator.join()
-        self.DataBase.shutdownDataBase(self.Replicator.fullPull())
-        self._logger.logprb(INFO, 'DataSource', 'queryClosing()', 341, self._provider.Scheme)
-    def notifyClosing(self, source):
-        pass
+    def parseUrl(self, url):
+        return self._urifactory.parse(url)
 
     # Private methods
-    def _getUser(self, source, url, authority):
+    def _getUser(self, source, authority, url):
         default = False
-        uri = self._factory.parse(url)
+        uri = self.parseUrl(url)
         if uri is None:
             msg = self._logger.resolveString(321, url)
             raise IllegalIdentifierException(msg, source)
@@ -105,29 +127,43 @@ class DataSource(unohelper.Base,
             if uri.hasAuthority() and uri.getAuthority() != '':
                 name = uri.getAuthority()
             else:
-                msg = self._logger.resolveString(322, url)
+                title, msg = self._getExceptionMessage(322, url)
+                showWarning(self._ctx, title, msg)
                 raise IllegalIdentifierException(msg, source)
         elif self._default:
             name = self._default
         else:
             name = self._getUserName(source, url)
             default = True
-        # User never change... we can cache it...
+        # XXX: User never change... we can cache it...
         if name in self._users:
             user = self._users[name]
+            if not user.Request.isAuthorized():
+                # XXX: The user's OAuth2 configuration has been deleted and
+                # XXX: the OAuth2 configuration wizard has been canceled.
+                title, msg = self._getExceptionMessage(324, name)
+                showWarning(self._ctx, title, msg)
+                raise IllegalIdentifierException(msg, source)
         else:
-            user = ContentUser(self._ctx, self._logger, source, self.DataBase,
-                               self._provider, name, self._sync, self._lock)
+            user = User(self._ctx, source, self._logger, self.DataBase,
+                        self._provider, self._sync, name)
             self._users[name] = user
-        # FIXME: if the user has been instantiated then we can consider it as the default user
+        # XXX: If the user has been requested and instantiated
+        # XXX: then we can consider it as the default user
         if default:
             self._default = name
-        return user, uri.getPath()
+        return user, uri
 
     def _getUserName(self, source, url):
-        name = getOAuth2UserName(self._ctx, self, self._provider.Scheme)
+        try:
+            name = getOAuth2UserName(self._ctx, source, self._provider.Scheme)
+        except:
+            print("DataSource._getUserName() ERROR: %s" % traceback.format_exc())
         if not name:
-            msg = self._logger.resolveString(331, url)
+            title, msg = self._getExceptionMessage(331, url)
+            showWarning(self._ctx, title, msg)
             raise IllegalIdentifierException(msg, source)
         return name
 
+    def _getExceptionMessage(self, code, *args):
+        return getExceptionMessage(self._logger, code, g_extension, *args)

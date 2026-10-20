@@ -4,7 +4,7 @@
 """
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -27,7 +27,13 @@
 ╚════════════════════════════════════════════════════════════════════════════════════╝
 """
 
+from .configuration import g_agent
 from .configuration import g_extension
 from .configuration import g_identifier
+from .configuration import g_java
+from .configuration import g_protocol
+from .configuration import g_script
 from .configuration import g_service
+from .configuration import g_services
 from .configuration import g_version
+

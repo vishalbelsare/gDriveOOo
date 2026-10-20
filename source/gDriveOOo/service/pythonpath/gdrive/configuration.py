@@ -4,7 +4,7 @@
 """
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -50,19 +50,13 @@ g_chunk = 256 * 1024
 g_pages = 200
 g_IdentifierRange = (10, 50)
 
-g_office = 'application/vnd.oasis.opendocument'
-g_folder = 'application/vnd.google-apps.folder'
-g_link = 'application/vnd.google-apps.drive-sdk'
+g_ucpfolder = 'application/vnd.google-apps.folder'
+g_ucplink   = 'application/vnd.google-apps.link'
+
 g_doc_map = {'application/vnd.google-apps.document':     'application/vnd.oasis.opendocument.text',
-             'application/vnd.google-apps.spreadsheet':  'application/x-vnd.oasis.opendocument.spreadsheet',
+             'application/vnd.google-apps.spreadsheet':  'application/vnd.oasis.opendocument.spreadsheet',
              'application/vnd.google-apps.presentation': 'application/vnd.oasis.opendocument.presentation',
-             'application/vnd.google-apps.drawing':      'application/pdf'}
-
-g_cache = 20
-g_admin = False
-
-# The URL separator
-g_separator = '/'
+             'application/vnd.google-apps.drawing':      'application/vnd.oasis.opendocument.graphics'}
 
 # Resource strings files folder
 g_resource = 'resource'
@@ -72,5 +66,4 @@ g_defaultlog = 'gDriveLog'
 g_errorlog = 'gDriveError'
 # Logging global variable
 g_synclog = 'gDriveSync'
-
 

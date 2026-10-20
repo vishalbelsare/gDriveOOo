@@ -1,4 +1,4 @@
-# Copyright (c) 2015, Menno Smits
+# Copyright (c) 2026, Menno Smits
 # Released subject to the New BSD License
 # Please see http://en.wikipedia.org/wiki/BSD_licenses
 
@@ -10,24 +10,18 @@ Layer Security (TLS a.k.a. SSL).
 import imaplib
 import socket
 import ssl
+from typing import Optional
 
 
-def wrap_socket(sock, ssl_context, host):
+def create_default_context() -> ssl.SSLContext:
+    return ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH)
 
-    if not hasattr(ssl, "create_default_context"):
-        # Python 2.7.0 - 2.7.8 do not have the concept of ssl contexts.
-        # Thus we have to use the less flexible and legacy way of wrapping the
-        # socket
-        if ssl_context is not None:
-            raise RuntimeError(
-                "Cannot precisely configure the SSL connection, upgrade to "
-                "Python >= 2.7.9 to fine tune the settings."
-            )
 
-        return ssl.wrap_socket(sock)
-
+def wrap_socket(
+    sock: socket.socket, ssl_context: Optional[ssl.SSLContext], host: str
+) -> socket.socket:
     if ssl_context is None:
-        ssl_context = ssl.create_default_context()
+        ssl_context = create_default_context()
 
     return ssl_context.wrap_socket(sock, server_hostname=host)
 
@@ -38,28 +32,20 @@ class IMAP4_TLS(imaplib.IMAP4):
     Adapted from imaplib.IMAP4_SSL.
     """
 
-    def __init__(self, host, port, ssl_context, timeout=None):
+    def __init__(
+        self,
+        host: str,
+        port: int = 993,
+        ssl_context: Optional[ssl.SSLContext] = None,
+        timeout: Optional[float] = None,
+    ):
         self.ssl_context = ssl_context
         self._timeout = timeout
-        imaplib.IMAP4.__init__(self, host, port)
+        super().__init__(host, port)
 
-    def open(self, host, port=993, timeout=None):
-        self.host = host
-        self.port = port
-        sock = socket.create_connection(
-            (host, port), timeout if timeout is not None else self._timeout
-        )
-        self.sock = wrap_socket(sock, self.ssl_context, host)
-        self.file = self.sock.makefile("rb")
+    def _create_socket(self, timeout: Optional[float] = None) -> socket.socket:
+        if timeout is None:
+            timeout = self._timeout
+        sock = socket.create_connection((self.host, self.port), timeout=timeout)
 
-    def read(self, size):
-        return self.file.read(size)
-
-    def readline(self):
-        return self.file.readline()
-
-    def send(self, data):
-        self.sock.sendall(data)
-
-    def shutdown(self):
-        imaplib.IMAP4.shutdown(self)
+        return wrap_socket(sock, self.ssl_context, self.host)

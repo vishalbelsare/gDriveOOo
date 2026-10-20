@@ -1,7 +1,7 @@
 /*
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -29,6 +29,8 @@
 
 #include <com/sun/star/uno/XInterface.idl>
 #include <com/sun/star/auth/RefreshTokenException.idl>
+#include <com/sun/star/beans/NamedValue.idl>
+#include <com/sun/star/container/XNameAccess.idl>
 #include <com/sun/star/rest/RequestException.idl>
 #include <com/sun/star/rest/XRequestResponse.idl>
 #include <com/sun/star/rest/XRequestParameter.idl>
@@ -37,27 +39,21 @@
 
 module com { module sun { module star { module auth {
 
-interface XOAuth2Service: com::sun::star::uno::XInterface
+interface XOAuth2Service : com::sun::star::uno::XInterface
 {
 
-    boolean isOnLine();
+    short getSessionMode([in] string Host);
 
-    boolean isOffLine([in] string Host);
+    boolean isAuthorized();
 
-    boolean initializeUrl([in] string ResourceUrl);
+    boolean isRegisteredUrl([in] string Url);
 
-    boolean initializeSession([in] string ResourceUrl,
-                              [in] string UserName);
-
-    boolean getAuthorization([in] string ResourceUrl,
-                             [in] string UserName,
-                             [in] boolean AutoClose,
-                             [in] com::sun::star::awt::XWindowPeer Parent);
-
-    string getToken([in] string Format)
+    string getToken([in] string Template)
                     raises(com::sun::star::auth::RefreshTokenException);
 
-    short getSessionMode([in] string Host);
+    string getTokenWithParameters([in] com::sun::star::container::XNameAccess Parameters,
+                                  [in] sequence<com::sun::star::beans::NamedValue> Arguments)
+                                  raises(com::sun::star::auth::RefreshTokenException);
 
     string unquoteUrl([in] string Url);
 
@@ -89,7 +85,6 @@ interface XOAuth2Service: com::sun::star::uno::XInterface
     [attribute, readonly] string ProviderName;
     [attribute, readonly] string UserName;
     [attribute, readonly] sequence<short> Timeout;
-
 
 };
 

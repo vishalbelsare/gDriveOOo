@@ -1,14 +1,58 @@
-# These are the only functions that ever yield back to the task runner.
+"""These are the only functions that ever yield back to the task runner."""
 
-import types
+from __future__ import annotations
+
 import enum
+import types
 
-import attr
+# typing.Callable is necessary because collections.abc.Callable breaks
+# test_static_tool_sees_all_symbols in 3.10.
+from typing import (  # noqa: UP035
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    NoReturn,
+    TypeAlias,
+    cast,
+)
+
+import attrs
 import outcome
 
 from . import _run
 
-from typing import Callable, NoReturn, Any
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Generator
+
+    from ._run import Task
+
+RaiseCancelT: TypeAlias = Callable[[], NoReturn]
+
+
+# This class object is used as a singleton.
+# Not exported in the trio._core namespace, but imported directly by _run.
+class CancelShieldedCheckpoint:
+    __slots__ = ()
+
+
+# Not exported in the trio._core namespace, but imported directly by _run.
+@attrs.frozen(slots=False)
+class WaitTaskRescheduled:
+    abort_func: Callable[[RaiseCancelT], Abort]
+
+
+# Not exported in the trio._core namespace, but imported directly by _run.
+@attrs.frozen(slots=False)
+class PermanentlyDetachCoroutineObject:
+    final_outcome: outcome.Outcome[object]
+
+
+MessageType: TypeAlias = (
+    type[CancelShieldedCheckpoint]
+    | WaitTaskRescheduled
+    | PermanentlyDetachCoroutineObject
+    | object
+)
 
 
 # Helper for the bottommost 'yield'. You can't use 'yield' inside an async
@@ -19,17 +63,23 @@ from typing import Callable, NoReturn, Any
 # tracking machinery. Since our traps are public APIs, we make them real async
 # functions, and then this helper takes care of the actual yield:
 @types.coroutine
-def _async_yield(obj):
-    return (yield obj)
+def _real_async_yield(
+    obj: MessageType,
+) -> Generator[MessageType, None, None]:
+    # "Using `yield` and `return {value}` in a generator function can
+    # lead to confusing behavior"
+    return (yield obj)  # noqa: B901
 
 
-# This class object is used as a singleton.
-# Not exported in the trio._core namespace, but imported directly by _run.
-class CancelShieldedCheckpoint:
-    pass
+# Real yield value is from trio's main loop, but type checkers can't
+# understand that, so we cast it to make type checkers understand.
+_async_yield = cast(
+    "Callable[[MessageType], Awaitable[outcome.Outcome[object]]]",
+    _real_async_yield,
+)
 
 
-async def cancel_shielded_checkpoint():
+async def cancel_shielded_checkpoint() -> None:
     """Introduce a schedule point, but not a cancel point.
 
     This is *not* a :ref:`checkpoint <checkpoints>`, but it is half of a
@@ -42,7 +92,7 @@ async def cancel_shielded_checkpoint():
             await trio.lowlevel.checkpoint()
 
     """
-    return (await _async_yield(CancelShieldedCheckpoint)).unwrap()
+    (await _async_yield(CancelShieldedCheckpoint)).unwrap()
 
 
 # Return values for abort functions
@@ -60,18 +110,11 @@ class Abort(enum.Enum):
     FAILED = 2
 
 
-# Not exported in the trio._core namespace, but imported directly by _run.
-@attr.s(frozen=True)
-class WaitTaskRescheduled:
-    abort_func = attr.ib()
-
-
-RaiseCancelT = Callable[[], NoReturn]  # TypeAlias
-
-
 # Should always return the type a Task "expects", unless you willfully reschedule it
 # with a bad value.
-async def wait_task_rescheduled(abort_func: Callable[[RaiseCancelT], Abort]) -> Any:
+async def wait_task_rescheduled(  # type: ignore[explicit-any]
+    abort_func: Callable[[RaiseCancelT], Abort],
+) -> Any:
     """Put the current task to sleep, with cancellation support.
 
     This is the lowest-level API for blocking in Trio. Every time a
@@ -173,13 +216,9 @@ async def wait_task_rescheduled(abort_func: Callable[[RaiseCancelT], Abort]) -> 
     return (await _async_yield(WaitTaskRescheduled(abort_func))).unwrap()
 
 
-# Not exported in the trio._core namespace, but imported directly by _run.
-@attr.s(frozen=True)
-class PermanentlyDetachCoroutineObject:
-    final_outcome = attr.ib()
-
-
-async def permanently_detach_coroutine_object(final_outcome):
+async def permanently_detach_coroutine_object(
+    final_outcome: outcome.Outcome[object],
+) -> object:
     """Permanently detach the current task from the Trio scheduler.
 
     Normally, a Trio task doesn't exit until its coroutine object exits. When
@@ -205,12 +244,14 @@ async def permanently_detach_coroutine_object(final_outcome):
     """
     if _run.current_task().child_nurseries:
         raise RuntimeError(
-            "can't permanently detach a coroutine object with open nurseries"
+            "can't permanently detach a coroutine object with open nurseries",
         )
     return await _async_yield(PermanentlyDetachCoroutineObject(final_outcome))
 
 
-async def temporarily_detach_coroutine_object(abort_func):
+async def temporarily_detach_coroutine_object(
+    abort_func: Callable[[RaiseCancelT], Abort],
+) -> object:
     """Temporarily detach the current coroutine object from the Trio
     scheduler.
 
@@ -246,7 +287,7 @@ async def temporarily_detach_coroutine_object(abort_func):
     return await _async_yield(WaitTaskRescheduled(abort_func))
 
 
-async def reattach_detached_coroutine_object(task, yield_value):
+async def reattach_detached_coroutine_object(task: Task, yield_value: object) -> None:
     """Reattach a coroutine object that was detached using
     :func:`temporarily_detach_coroutine_object`.
 

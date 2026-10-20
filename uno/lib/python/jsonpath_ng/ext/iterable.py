@@ -56,13 +56,20 @@ class SortedThis(This):
         return datum
 
     def __eq__(self, other):
-        return isinstance(other, Len)
+        return (
+            isinstance(other, SortedThis)
+            and self.expressions == other.expressions
+        )
 
     def __repr__(self):
         return '%s(%r)' % (self.__class__.__name__, self.expressions)
 
     def __str__(self):
-        return '[?%s]' % self.expressions
+        expressions: list[str] = []
+        for (field, reverse) in self.expressions:
+            prefix = "\\" if reverse else "/"
+            expressions.append(f"{prefix}{field}")
+        return f"[{', '.join(expressions)}]"
 
 
 class Len(JSONPath):
@@ -90,3 +97,54 @@ class Len(JSONPath):
 
     def __repr__(self):
         return 'Len()'
+
+
+class Keys(JSONPath):
+    """The JSONPath referring to the keys of the current object.
+    Concrete syntax is '`keys`'.
+    """
+
+    def find(self, datum):
+        datum = DatumInContext.wrap(datum)
+        try:
+            value = list(datum.value.keys())
+        except Exception as e:
+            return []
+        else:
+            return [DatumInContext(value[i],
+                                               context=None,
+                                               path=Keys()) for i in range (0, len(datum.value))]
+
+    def __eq__(self, other):
+        return isinstance(other, Keys)
+
+    def __str__(self):
+        return '`keys`'
+
+    def __repr__(self):
+        return 'Keys()'
+
+class Path(JSONPath):
+    """The JSONPath referring to the path of the current object.
+    Concrete syntax is 'path`'.
+    """
+
+    def find(self, datum):
+        datum = DatumInContext.wrap(datum)
+        try:
+            value = str(datum.path)
+        except Exception as e:
+            return []
+        else:
+            return [DatumInContext(value,
+                                   context=datum,
+                                   path=Path())]
+
+    def __eq__(self, other):
+        return isinstance(other, Path)
+
+    def __str__(self):
+        return '`path`'
+
+    def __repr__(self):
+        return 'Path()'

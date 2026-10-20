@@ -1,21 +1,16 @@
 from __future__ import annotations
 
-import os
 import errno
-from typing import TYPE_CHECKING
-
-from ._abc import Stream
-from ._util import ConflictDetector, Final
+import os
+import sys
+from typing import TYPE_CHECKING, Final as FinalType
 
 import trio
 
-if TYPE_CHECKING:
-    from typing_extensions import Final as FinalType
+from ._abc import Stream
+from ._util import ConflictDetector, final
 
-if os.name != "posix":
-    # We raise an error here rather than gating the import in lowlevel.py
-    # in order to keep jedi static analysis happy.
-    raise ImportError
+assert not TYPE_CHECKING or sys.platform != "win32"
 
 # XX TODO: is this a good number? who knows... it does match the default Linux
 # pipe capacity though.
@@ -81,9 +76,9 @@ class _FdHolder:
             self._raw_close()
 
 
-class FdStream(Stream, metaclass=Final):
-    """
-    Represents a stream given the file descriptor to a pipe, TTY, etc.
+@final
+class FdStream(Stream):
+    """Represents a stream given the file descriptor to a pipe, TTY, etc.
 
     *fd* must refer to a file that is open for reading and/or writing and
     supports non-blocking I/O (pipes and TTYs will work, on-disk files probably
@@ -107,6 +102,15 @@ class FdStream(Stream, metaclass=Final):
     <https://github.com/python-trio/trio/issues/174>`__ for a discussion of the
     challenges involved in relaxing this restriction.
 
+    .. warning:: one specific consequence of non-blocking mode
+      applying to the entire open file description is that when
+      your program is run with multiple standard streams connected to
+      a TTY (as in a terminal emulator), all of the streams become
+      non-blocking when you construct an `FdStream` for any of them.
+      For example, if you construct an `FdStream` for standard input,
+      you might observe Python loggers begin to fail with
+      `BlockingIOError`.
+
     Args:
       fd (int): The fd to be wrapped.
 
@@ -117,13 +121,13 @@ class FdStream(Stream, metaclass=Final):
     def __init__(self, fd: int) -> None:
         self._fd_holder = _FdHolder(fd)
         self._send_conflict_detector = ConflictDetector(
-            "another task is using this stream for send"
+            "another task is using this stream for send",
         )
         self._receive_conflict_detector = ConflictDetector(
-            "another task is using this stream for receive"
+            "another task is using this stream for receive",
         )
 
-    async def send_all(self, data: bytes) -> None:
+    async def send_all(self, data: bytes | bytearray | memoryview) -> None:
         with self._send_conflict_detector:
             # have to check up front, because send_all(b"") on a closed pipe
             # should raise
@@ -143,7 +147,7 @@ class FdStream(Stream, metaclass=Final):
                         except OSError as e:
                             if e.errno == errno.EBADF:
                                 raise trio.ClosedResourceError(
-                                    "file was already closed"
+                                    "file was already closed",
                                 ) from None
                             else:
                                 raise trio.BrokenResourceError from e
@@ -152,12 +156,7 @@ class FdStream(Stream, metaclass=Final):
         with self._send_conflict_detector:
             if self._fd_holder.closed:
                 raise trio.ClosedResourceError("file was already closed")
-            try:
-                await trio.lowlevel.wait_writable(self._fd_holder.fd)
-            except BrokenPipeError as e:
-                # kqueue: raises EPIPE on wait_writable instead
-                # of sending, which is annoying
-                raise trio.BrokenResourceError from e
+            await trio.lowlevel.wait_writable(self._fd_holder.fd)
 
     async def receive_some(self, max_bytes: int | None = None) -> bytes:
         with self._receive_conflict_detector:
@@ -175,13 +174,13 @@ class FdStream(Stream, metaclass=Final):
                     data = os.read(self._fd_holder.fd, max_bytes)
                 except BlockingIOError:
                     await trio.lowlevel.wait_readable(self._fd_holder.fd)
-                except OSError as e:
-                    if e.errno == errno.EBADF:
+                except OSError as exc:
+                    if exc.errno == errno.EBADF:
                         raise trio.ClosedResourceError(
-                            "file was already closed"
+                            "file was already closed",
                         ) from None
                     else:
-                        raise trio.BrokenResourceError from e
+                        raise trio.BrokenResourceError from exc
                 else:
                     break
 

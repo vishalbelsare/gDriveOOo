@@ -1,7 +1,7 @@
 # Public C API for lxml.etree
 
 cdef public api _Element deepcopyNodeToDocument(_Document doc, xmlNode* c_root):
-    u"Recursively copy the element into the document. doc is not modified."
+    "Recursively copy the element into the document. doc is not modified."
     cdef xmlNode* c_node
     c_node = _copyNodeToDoc(c_root, doc._c_doc)
     return _elementFactory(doc, c_node)
@@ -51,7 +51,7 @@ cdef public api object callLookupFallback(FallbackElementClassLookup lookup,
                                           _Document doc, xmlNode* c_node):
     return _callLookupFallback(lookup, doc, c_node)
 
-cdef public api int tagMatches(xmlNode* c_node, const_xmlChar* c_href, const_xmlChar* c_name):
+cdef public api int tagMatches(xmlNode* c_node, const_xmlChar* c_href, const_xmlChar* c_name) noexcept:
     if c_node is NULL:
         return -1
     return _tagMatches(c_node, c_href, c_name)
@@ -62,18 +62,18 @@ cdef public api _Document documentOrRaise(object input):
 cdef public api _Element rootNodeOrRaise(object input):
     return _rootNodeOrRaise(input)
 
-cdef public api bint hasText(xmlNode* c_node):
+cdef public api bint hasText(xmlNode* c_node) noexcept:
     return _hasText(c_node)
 
-cdef public api bint hasTail(xmlNode* c_node):
+cdef public api bint hasTail(xmlNode* c_node) noexcept:
     return _hasTail(c_node)
 
-cdef public api object textOf(xmlNode* c_node):
+cdef public api unicode textOf(xmlNode* c_node):
     if c_node is NULL:
         return None
     return _collectText(c_node.children)
 
-cdef public api object tailOf(xmlNode* c_node):
+cdef public api unicode tailOf(xmlNode* c_node):
     if c_node is NULL:
         return None
     return _collectText(c_node.next)
@@ -88,10 +88,10 @@ cdef public api int setTailText(xmlNode* c_node, text) except -1:
         raise ValueError
     return _setTailText(c_node, text)
 
-cdef public api object attributeValue(xmlNode* c_element, xmlAttr* c_attrib_node):
+cdef public api unicode attributeValue(xmlNode* c_element, xmlAttr* c_attrib_node):
     return _attributeValue(c_element, c_attrib_node)
 
-cdef public api object attributeValueFromNsName(xmlNode* c_element,
+cdef public api unicode attributeValueFromNsName(xmlNode* c_element,
                                                 const_xmlChar* ns, const_xmlChar* name):
     return _attributeValueFromNsName(c_element, ns, name)
 
@@ -115,25 +115,25 @@ cdef public api int delAttribute(_Element element, key) except -1:
     return _delAttribute(element, key)
 
 cdef public api int delAttributeFromNsName(tree.xmlNode* c_element,
-                                           const_xmlChar* c_href, const_xmlChar* c_name):
+                                           const_xmlChar* c_href, const_xmlChar* c_name) noexcept:
     return _delAttributeFromNsName(c_element, c_href, c_name)
 
-cdef public api bint hasChild(xmlNode* c_node):
+cdef public api bint hasChild(xmlNode* c_node) noexcept:
     return _hasChild(c_node)
 
-cdef public api xmlNode* findChild(xmlNode* c_node, Py_ssize_t index):
+cdef public api xmlNode* findChild(xmlNode* c_node, Py_ssize_t index) noexcept:
     return _findChild(c_node, index)
 
-cdef public api xmlNode* findChildForwards(xmlNode* c_node, Py_ssize_t index):
+cdef public api xmlNode* findChildForwards(xmlNode* c_node, Py_ssize_t index) noexcept:
     return _findChildForwards(c_node, index)
 
-cdef public api xmlNode* findChildBackwards(xmlNode* c_node, Py_ssize_t index):
+cdef public api xmlNode* findChildBackwards(xmlNode* c_node, Py_ssize_t index) noexcept:
     return _findChildBackwards(c_node, index)
 
-cdef public api xmlNode* nextElement(xmlNode* c_node):
+cdef public api xmlNode* nextElement(xmlNode* c_node) noexcept:
     return _nextElement(c_node)
 
-cdef public api xmlNode* previousElement(xmlNode* c_node):
+cdef public api xmlNode* previousElement(xmlNode* c_node) noexcept:
     return _previousElement(c_node)
 
 cdef public api void appendChild(_Element parent, _Element child):
@@ -143,7 +143,7 @@ cdef public api void appendChild(_Element parent, _Element child):
 cdef public api int appendChildToElement(_Element parent, _Element child) except -1:
     return _appendChild(parent, child)
 
-cdef public api object pyunicode(const_xmlChar* s):
+cdef public api unicode pyunicode(const_xmlChar* s):
     if s is NULL:
         raise TypeError
     return funicode(s)
@@ -157,10 +157,10 @@ cdef public api tuple getNsTag(object tag):
 cdef public api tuple getNsTagWithEmptyNs(object tag):
     return _getNsTagWithEmptyNs(tag)
 
-cdef public api object namespacedName(xmlNode* c_node):
+cdef public api unicode namespacedName(xmlNode* c_node):
     return _namespacedName(c_node)
 
-cdef public api object namespacedNameFromNsName(const_xmlChar* href, const_xmlChar* name):
+cdef public api unicode namespacedNameFromNsName(const_xmlChar* href, const_xmlChar* name):
     return _namespacedNameFromNsName(href, name)
 
 cdef public api void iteratorStoreNext(_ElementIterator iterator, _Element node):

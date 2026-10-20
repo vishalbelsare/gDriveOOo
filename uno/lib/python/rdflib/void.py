@@ -1,14 +1,20 @@
-import collections
+from __future__ import annotations
 
-from rdflib import Graph, Literal, URIRef
+import collections
+from typing import DefaultDict, Dict, Optional, Set
+
+from rdflib.graph import Graph, _ObjectType, _PredicateType, _SubjectType
 from rdflib.namespace import RDF, VOID
+from rdflib.term import IdentifiedNode, Literal, URIRef
 
 
 def generateVoID(  # noqa: N802
-    g, dataset=None, res=None, distinctForPartitions=True  # noqa: N803
+    g: Graph,
+    dataset: Optional[IdentifiedNode] = None,
+    res: Optional[Graph] = None,
+    distinctForPartitions: bool = True,  # noqa: N803
 ):
-    """
-    Returns a new graph with a VoID description of the passed dataset
+    """Returns a new graph with a VoID description of the passed dataset
 
     For more info on Vocabulary of Interlinked Datasets (VoID), see:
     http://vocab.deri.ie/void
@@ -23,21 +29,26 @@ def generateVoID(  # noqa: N802
     the distinctForPartitions parameter controls whether
     distinctSubjects/objects are tracked for each class/propertyPartition
     this requires more memory again
-
     """
 
-    typeMap = collections.defaultdict(set)  # noqa: N806
-    classes = collections.defaultdict(set)  # noqa: N806
+    typeMap: Dict[_SubjectType, Set[_SubjectType]] = (  # noqa: N806
+        collections.defaultdict(set)
+    )
+    classes: Dict[_ObjectType, Set[_SubjectType]] = collections.defaultdict(set)
     for e, c in g.subject_objects(RDF.type):
         classes[c].add(e)
         typeMap[e].add(c)
 
     triples = 0
-    subjects = set()
-    objects = set()
-    properties = set()
-    classCount = collections.defaultdict(int)  # noqa: N806
-    propCount = collections.defaultdict(int)  # noqa: N806
+    subjects: Set[_SubjectType] = set()
+    objects: Set[_ObjectType] = set()
+    properties: Set[_PredicateType] = set()
+    classCount: DefaultDict[_SubjectType, int] = collections.defaultdict(  # noqa: N806
+        int
+    )
+    propCount: DefaultDict[_PredicateType, int] = collections.defaultdict(  # noqa: N806
+        int
+    )
 
     classProps = collections.defaultdict(set)  # noqa: N806
     classObjects = collections.defaultdict(set)  # noqa: N806

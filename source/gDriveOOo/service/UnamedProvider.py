@@ -4,7 +4,7 @@
 """
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -27,7 +27,6 @@
 ╚════════════════════════════════════════════════════════════════════════════════════╝
 """
 
-import uno
 import unohelper
 
 from com.sun.star.lang import XServiceInfo
@@ -51,7 +50,8 @@ import traceback
 
 # pythonloader looks for a static g_ImplementationHelper variable
 g_ImplementationHelper = unohelper.ImplementationHelper()
-g_ImplementationName = '%s.UnamedProvider' % g_identifier
+g_ImplementationName = 'io.github.prrvchr.gDriveOOo.UnamedProvider'
+g_ServiceNames = ('io.github.prrvchr.gDriveOOo.UnamedProvider', 'com.sun.star.ucb.ContentProviderProxy')
 
 
 class UnamedProvider(unohelper.Base,
@@ -63,7 +63,7 @@ class UnamedProvider(unohelper.Base,
         self._ctx = ctx
         self._provider = None
         self._logger = getLogger(ctx, g_defaultlog, g_basename)
-        self._logger.logprb(INFO, 'UnamedProvider', '__init__()', 101, g_ImplementationName)
+        self._logger.logprb(INFO, 'UnamedProvider', '__init__', 101, g_ImplementationName)
 
     # XContentProvider
     def queryContent(self, identifier):
@@ -78,7 +78,7 @@ class UnamedProvider(unohelper.Base,
     # XContentProviderSupplier
     def getContentProvider(self):
         if self._provider is None:
-            self._provider = ContentProvider(self._ctx, self._logger, False, 'Unamed')
+            self._provider = ContentProvider(self._ctx, self._logger, g_ImplementationName, False, 'Unamed')
         return self._provider
 
     # XParameterizedContentProvider
@@ -95,9 +95,6 @@ class UnamedProvider(unohelper.Base,
     def getSupportedServiceNames(self):
         return g_ImplementationHelper.getSupportedServiceNames(g_ImplementationName)
 
-
-g_ImplementationHelper.addImplementation(UnamedProvider,
-                                         g_ImplementationName,
-                                         (g_ImplementationName,
-                                         'com.sun.star.ucb.ContentProviderProxy'))
-
+g_ImplementationHelper.addImplementation(UnamedProvider,                  # UNO object class
+                                         g_ImplementationName,            # Implementation name
+                                         g_ServiceNames)                  # List of implemented services

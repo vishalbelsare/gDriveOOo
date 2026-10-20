@@ -1,13 +1,15 @@
 #!/usr/bin/env python
-# -*- coding: UTF-8 -*-
+
 """
 A commandline tool for parsing RDF in different formats and serializing the
 resulting graph to a chosen format.
 """
+from __future__ import annotations
 
 import logging
 import sys
 from optparse import OptionParser
+from typing import BinaryIO, Optional
 
 import rdflib
 from rdflib import plugin
@@ -61,6 +63,7 @@ def parse_and_serialize(
 
 def _format_and_kws(fmt):
     """
+    ```python
     >>> _format_and_kws("fmt")
     ('fmt', {})
     >>> _format_and_kws("fmt:+a")
@@ -73,6 +76,8 @@ def _format_and_kws(fmt):
     ('fmt', {'c': 'd'})
     >>> _format_and_kws("fmt:a=b:c")
     ('fmt', {'a': 'b:c'})
+
+    ```
     """
     fmt, kws = fmt, {}
     if fmt and ":" in fmt:
@@ -189,7 +194,7 @@ def main():
             pfx, uri = ns_kw.split("=")
             ns_bindings[pfx] = uri
 
-    outfile = sys.stdout.buffer
+    outfile: Optional[BinaryIO] = sys.stdout.buffer
 
     if opts.no_out:
         outfile = None

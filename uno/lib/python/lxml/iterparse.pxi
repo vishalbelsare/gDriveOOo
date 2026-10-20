@@ -1,13 +1,13 @@
 # iterparse -- event-driven parsing
 
-DEF __ITERPARSE_CHUNK_SIZE = 32768
-
 cdef class iterparse:
-    u"""iterparse(self, source, events=("end",), tag=None, \
+    """iterparse(self, source, events=("end",), tag=None, \
                   attribute_defaults=False, dtd_validation=False, \
                   load_dtd=False, no_network=True, remove_blank_text=False, \
-                  remove_comments=False, remove_pis=False, encoding=None, \
-                  html=False, recover=None, huge_tree=False, schema=None)
+                  compact=True, resolve_entities='internal', remove_comments=False, \
+                  remove_pis=False, strip_cdata=True, encoding=None, \
+                  html=False, recover=None, huge_tree=False, schema=None, \
+                  chunk_size=32768)
 
     Incremental parser.
 
@@ -42,9 +42,11 @@ cdef class iterparse:
      - remove_blank_text: discard blank text nodes
      - remove_comments: discard comments
      - remove_pis: discard processing instructions
-     - strip_cdata: replace CDATA sections by normal text content (default: True)
+     - strip_cdata: replace CDATA sections by normal text content (default:
+       True for XML, ignored otherwise)
      - compact: safe memory for short text content (default: True)
-     - resolve_entities: replace entities by their text value (default: True)
+     - resolve_entities: replace entities by their text value
+       (default: 'internal' only; True before lxml 6.1)
      - huge_tree: disable security restrictions and support very deep trees
                   and very long text content (only affects libxml2 2.7+)
      - html: parse input as HTML (default: XML)
@@ -54,6 +56,8 @@ cdef class iterparse:
     Other keyword arguments:
      - encoding: override the document encoding
      - schema: an XMLSchema to validate against
+     - chunk_size: the number of bytes to read from the 'source' in one chunk
+                   (default: 32768)
     """
     cdef _FeedParser _parser
     cdef object _tag
@@ -62,24 +66,24 @@ cdef class iterparse:
     cdef object _source
     cdef object _filename
     cdef object _error
+    cdef object _chunk_size
     cdef bint _close_source_after_read
 
-    def __init__(self, source, events=(u"end",), *, tag=None,
+    def __init__(self, source, events=("end",), *, tag=None,
                  attribute_defaults=False, dtd_validation=False,
                  load_dtd=False, no_network=True, remove_blank_text=False,
-                 compact=True, resolve_entities=True, remove_comments=False,
+                 compact=True, resolve_entities='internal', remove_comments=False,
                  remove_pis=False, strip_cdata=True, encoding=None,
                  html=False, recover=None, huge_tree=False, collect_ids=True,
-                 XMLSchema schema=None):
+                 XMLSchema schema=None, int chunk_size=32768):
         if not hasattr(source, 'read'):
             source = _getFSPathOrObject(source)
             self._filename = source
-            if python.IS_PYTHON2:
-                source = _encodeFilename(source)
-            source = open(source, 'rb')
+            self._source = open(source, 'rb')
             self._close_source_after_read = True
         else:
             self._filename = _getFilenameForFile(source)
+            self._source = source
             self._close_source_after_read = False
 
         if recover is None:
@@ -98,7 +102,6 @@ cdef class iterparse:
                 remove_blank_text=remove_blank_text,
                 remove_comments=remove_comments,
                 remove_pis=remove_pis,
-                strip_cdata=strip_cdata,
                 no_network=no_network,
                 target=None,  # TODO
                 schema=schema,
@@ -125,9 +128,9 @@ cdef class iterparse:
                 target=None,  # TODO
                 compact=compact)
 
+        self._chunk_size = chunk_size
         self._events = parser.read_events()
         self._parser = parser
-        self._source = source
 
     @property
     def error_log(self):
@@ -147,7 +150,7 @@ cdef class iterparse:
         return self._parser.version
 
     def set_element_class_lookup(self, ElementClassLookup lookup = None):
-        u"""set_element_class_lookup(self, lookup = None)
+        """set_element_class_lookup(self, lookup = None)
 
         Set a lookup scheme for element classes generated from this parser.
 
@@ -156,7 +159,7 @@ cdef class iterparse:
         self._parser.set_element_class_lookup(lookup)
 
     def makeelement(self, _tag, attrib=None, nsmap=None, **_extra):
-        u"""makeelement(self, _tag, attrib=None, nsmap=None, **_extra)
+        """makeelement(self, _tag, attrib=None, nsmap=None, **_extra)
 
         Creates a new element associated with this parser.
         """
@@ -217,7 +220,7 @@ cdef class iterparse:
 
     @cython.final
     cdef bint _read_more_events(self, _SaxParserContext context) except -123:
-        data = self._source.read(__ITERPARSE_CHUNK_SIZE)
+        data = self._source.read(self._chunk_size)
         if not isinstance(data, bytes):
             self._close_source()
             raise TypeError("reading file objects must return bytes objects")
@@ -239,7 +242,7 @@ cdef enum _IterwalkSkipStates:
 
 
 cdef class iterwalk:
-    u"""iterwalk(self, element_or_tree, events=("end",), tag=None)
+    """iterwalk(self, element_or_tree, events=("end",), tag=None)
 
     A tree walker that generates events from an existing tree as if it
     was parsing XML data with ``iterparse()``.
@@ -260,7 +263,7 @@ cdef class iterwalk:
     cdef int    _event_filter
     cdef _IterwalkSkipStates _skip_state
 
-    def __init__(self, element_or_tree, events=(u"end",), tag=None):
+    def __init__(self, element_or_tree, events=("end",), tag=None):
         cdef _Element root
         cdef int ns_count
         root = _rootNodeOrRaise(element_or_tree)
@@ -285,9 +288,9 @@ cdef class iterwalk:
                     self._include_siblings = root
                     for elem in list(root.itersiblings(preceding=True))[::-1]:
                         if self._event_filter & PARSE_EVENT_FILTER_COMMENT and elem.tag is Comment:
-                            self._events.append((u'comment', elem))
+                            self._events.append(('comment', elem))
                         elif self._event_filter & PARSE_EVENT_FILTER_PI and elem.tag is PI:
-                            self._events.append((u'pi', elem))
+                            self._events.append(('pi', elem))
 
             ns_count = self._start_node(root)
             self._node_stack.append( (root, ns_count) )
@@ -354,12 +357,12 @@ cdef class iterwalk:
             if c_node.type == tree.XML_COMMENT_NODE:
                 if self._event_filter & PARSE_EVENT_FILTER_COMMENT:
                     self._events.append(
-                        (u"comment", _elementFactory(doc, c_node)))
+                        ("comment", _elementFactory(doc, c_node)))
                 c_node = _nextElement(c_node)
             elif c_node.type == tree.XML_PI_NODE:
                 if self._event_filter & PARSE_EVENT_FILTER_PI:
                     self._events.append(
-                        (u"pi", _elementFactory(doc, c_node)))
+                        ("pi", _elementFactory(doc, c_node)))
                 c_node = _nextElement(c_node)
             else:
                 break
@@ -368,7 +371,7 @@ cdef class iterwalk:
     @cython.final
     cdef _next_event(self):
         if self._skip_state == IWSKIP_NEXT_IS_START:
-            if self._events[0][0] in (u'start', u'start-ns'):
+            if self._events[0][0] in ('start', 'start-ns'):
                 self._skip_state = IWSKIP_CAN_SKIP
         return self._pop_event(0)
 
@@ -395,7 +398,7 @@ cdef class iterwalk:
             ns_count = 0
         if self._event_filter & PARSE_EVENT_FILTER_START:
             if self._matcher is None or self._matcher.matches(node._c_node):
-                self._events.append( (u"start", node) )
+                self._events.append( ("start", node) )
                 self._skip_state = IWSKIP_NEXT_IS_START
         return ns_count
 
@@ -406,15 +409,15 @@ cdef class iterwalk:
         node, ns_count = self._node_stack.pop()
         if self._event_filter & PARSE_EVENT_FILTER_END:
             if self._matcher is None or self._matcher.matches(node._c_node):
-                self._events.append( (u"end", node) )
+                self._events.append( ("end", node) )
         if self._event_filter & PARSE_EVENT_FILTER_END_NS and ns_count:
-            event = (u"end-ns", None)
+            event = ("end-ns", None)
             for i in range(ns_count):
                 self._events.append(event)
         return node
 
 
-cdef int _countNsDefs(xmlNode* c_node):
+cdef int _countNsDefs(xmlNode* c_node) noexcept:
     cdef xmlNs* c_ns
     cdef int count
     count = 0
@@ -434,7 +437,7 @@ cdef int _appendStartNsEvents(xmlNode* c_node, list event_list) except -1:
         if c_ns.href:
             ns_tuple = (funicodeOrEmpty(c_ns.prefix),
                         funicode(c_ns.href))
-            event_list.append( (u"start-ns", ns_tuple) )
+            event_list.append( ("start-ns", ns_tuple) )
             count += 1
         c_ns = c_ns.next
     return count

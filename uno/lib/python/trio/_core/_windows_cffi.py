@@ -1,225 +1,196 @@
-import cffi
-import re
+from __future__ import annotations
+
 import enum
+from typing import TYPE_CHECKING, NewType, NoReturn, Protocol, TypeAlias, cast
+
+if TYPE_CHECKING:
+    import cffi
+
+    CData: TypeAlias = cffi.api.FFI.CData
+    CType: TypeAlias = cffi.api.FFI.CType
+
+from ._generated_windows_ffi import ffi
 
 ################################################################
 # Functions and types
 ################################################################
 
-LIB = """
-// https://msdn.microsoft.com/en-us/library/windows/desktop/aa383751(v=vs.85).aspx
-typedef int BOOL;
-typedef unsigned char BYTE;
-typedef BYTE BOOLEAN;
-typedef void* PVOID;
-typedef PVOID HANDLE;
-typedef unsigned long DWORD;
-typedef unsigned long ULONG;
-typedef unsigned int NTSTATUS;
-typedef unsigned long u_long;
-typedef ULONG *PULONG;
-typedef const void *LPCVOID;
-typedef void *LPVOID;
-typedef const wchar_t *LPCWSTR;
+if not TYPE_CHECKING:
+    CData: TypeAlias = ffi.CData
+    CType: TypeAlias = ffi.CType
 
-typedef uintptr_t ULONG_PTR;
-typedef uintptr_t UINT_PTR;
+AlwaysNull: TypeAlias = CData  # We currently always pass ffi.NULL here.
+Handle = NewType("Handle", CData)
+HandleArray = NewType("HandleArray", CData)
 
-typedef UINT_PTR SOCKET;
 
-typedef struct _OVERLAPPED {
-    ULONG_PTR Internal;
-    ULONG_PTR InternalHigh;
-    union {
-        struct {
-            DWORD Offset;
-            DWORD OffsetHigh;
-        } DUMMYSTRUCTNAME;
-        PVOID Pointer;
-    } DUMMYUNIONNAME;
+class _Kernel32(Protocol):
+    """Statically typed version of the kernel32.dll functions we use."""
 
-    HANDLE  hEvent;
-} OVERLAPPED, *LPOVERLAPPED;
+    def CreateIoCompletionPort(
+        self,
+        FileHandle: Handle,
+        ExistingCompletionPort: CData | AlwaysNull,
+        CompletionKey: int,
+        NumberOfConcurrentThreads: int,
+        /,
+    ) -> Handle: ...
 
-typedef OVERLAPPED WSAOVERLAPPED;
-typedef LPOVERLAPPED LPWSAOVERLAPPED;
-typedef PVOID LPSECURITY_ATTRIBUTES;
-typedef PVOID LPCSTR;
+    def CreateEventA(
+        self,
+        lpEventAttributes: AlwaysNull,
+        bManualReset: bool,
+        bInitialState: bool,
+        lpName: AlwaysNull,
+        /,
+    ) -> Handle: ...
 
-typedef struct _OVERLAPPED_ENTRY {
-    ULONG_PTR lpCompletionKey;
-    LPOVERLAPPED lpOverlapped;
-    ULONG_PTR Internal;
-    DWORD dwNumberOfBytesTransferred;
-} OVERLAPPED_ENTRY, *LPOVERLAPPED_ENTRY;
+    def SetFileCompletionNotificationModes(
+        self,
+        handle: Handle,
+        flags: CompletionModes,
+        /,
+    ) -> int: ...
 
-// kernel32.dll
-HANDLE WINAPI CreateIoCompletionPort(
-  _In_     HANDLE    FileHandle,
-  _In_opt_ HANDLE    ExistingCompletionPort,
-  _In_     ULONG_PTR CompletionKey,
-  _In_     DWORD     NumberOfConcurrentThreads
-);
+    def PostQueuedCompletionStatus(
+        self,
+        CompletionPort: Handle,
+        dwNumberOfBytesTransferred: int,
+        dwCompletionKey: int,
+        lpOverlapped: CData | AlwaysNull,
+        /,
+    ) -> bool: ...
 
-BOOL SetFileCompletionNotificationModes(
-  HANDLE FileHandle,
-  UCHAR  Flags
-);
+    def CancelIoEx(
+        self,
+        hFile: Handle,
+        lpOverlapped: CData | AlwaysNull,
+        /,
+    ) -> bool: ...
 
-HANDLE CreateFileW(
-  LPCWSTR               lpFileName,
-  DWORD                 dwDesiredAccess,
-  DWORD                 dwShareMode,
-  LPSECURITY_ATTRIBUTES lpSecurityAttributes,
-  DWORD                 dwCreationDisposition,
-  DWORD                 dwFlagsAndAttributes,
-  HANDLE                hTemplateFile
-);
+    def WriteFile(
+        self,
+        hFile: Handle,
+        # not sure about this type
+        lpBuffer: CData,
+        nNumberOfBytesToWrite: int,
+        lpNumberOfBytesWritten: AlwaysNull,
+        lpOverlapped: _Overlapped,
+        /,
+    ) -> bool: ...
 
-BOOL WINAPI CloseHandle(
-  _In_ HANDLE hObject
-);
+    def ReadFile(
+        self,
+        hFile: Handle,
+        # not sure about this type
+        lpBuffer: CData,
+        nNumberOfBytesToRead: int,
+        lpNumberOfBytesRead: AlwaysNull,
+        lpOverlapped: _Overlapped,
+        /,
+    ) -> bool: ...
 
-BOOL WINAPI PostQueuedCompletionStatus(
-  _In_     HANDLE       CompletionPort,
-  _In_     DWORD        dwNumberOfBytesTransferred,
-  _In_     ULONG_PTR    dwCompletionKey,
-  _In_opt_ LPOVERLAPPED lpOverlapped
-);
+    def GetQueuedCompletionStatusEx(
+        self,
+        CompletionPort: Handle,
+        lpCompletionPortEntries: CData,
+        ulCount: int,
+        ulNumEntriesRemoved: CData,
+        dwMilliseconds: int,
+        fAlertable: bool | int,
+        /,
+    ) -> CData: ...
 
-BOOL WINAPI GetQueuedCompletionStatusEx(
-  _In_  HANDLE             CompletionPort,
-  _Out_ LPOVERLAPPED_ENTRY lpCompletionPortEntries,
-  _In_  ULONG              ulCount,
-  _Out_ PULONG             ulNumEntriesRemoved,
-  _In_  DWORD              dwMilliseconds,
-  _In_  BOOL               fAlertable
-);
+    def CreateFileW(
+        self,
+        lpFileName: CData,
+        dwDesiredAccess: FileFlags,
+        dwShareMode: FileFlags,
+        lpSecurityAttributes: AlwaysNull,
+        dwCreationDisposition: FileFlags,
+        dwFlagsAndAttributes: FileFlags,
+        hTemplateFile: AlwaysNull,
+        /,
+    ) -> Handle: ...
 
-BOOL WINAPI CancelIoEx(
-  _In_     HANDLE       hFile,
-  _In_opt_ LPOVERLAPPED lpOverlapped
-);
+    def WaitForSingleObject(self, hHandle: Handle, dwMilliseconds: int, /) -> CData: ...
 
-BOOL WriteFile(
-  HANDLE       hFile,
-  LPCVOID      lpBuffer,
-  DWORD        nNumberOfBytesToWrite,
-  LPDWORD      lpNumberOfBytesWritten,
-  LPOVERLAPPED lpOverlapped
-);
+    def WaitForMultipleObjects(
+        self,
+        nCount: int,
+        lpHandles: HandleArray,
+        bWaitAll: bool,
+        dwMilliseconds: int,
+        /,
+    ) -> ErrorCodes: ...
 
-BOOL ReadFile(
-  HANDLE       hFile,
-  LPVOID       lpBuffer,
-  DWORD        nNumberOfBytesToRead,
-  LPDWORD      lpNumberOfBytesRead,
-  LPOVERLAPPED lpOverlapped
-);
+    def SetEvent(self, handle: Handle, /) -> None: ...
 
-BOOL WINAPI SetConsoleCtrlHandler(
-  _In_opt_ void*            HandlerRoutine,
-  _In_     BOOL             Add
-);
+    def CloseHandle(self, handle: Handle, /) -> bool: ...
 
-HANDLE CreateEventA(
-  LPSECURITY_ATTRIBUTES lpEventAttributes,
-  BOOL                  bManualReset,
-  BOOL                  bInitialState,
-  LPCSTR                lpName
-);
+    def DeviceIoControl(
+        self,
+        hDevice: Handle,
+        dwIoControlCode: int,
+        # this is wrong (it's not always null)
+        lpInBuffer: AlwaysNull,
+        nInBufferSize: int,
+        # this is also wrong
+        lpOutBuffer: AlwaysNull,
+        nOutBufferSize: int,
+        lpBytesReturned: AlwaysNull,
+        lpOverlapped: CData,
+        /,
+    ) -> bool: ...
 
-BOOL SetEvent(
-  HANDLE hEvent
-);
 
-BOOL ResetEvent(
-  HANDLE hEvent
-);
+class _Nt(Protocol):
+    """Statically typed version of the dtdll.dll functions we use."""
 
-DWORD WaitForSingleObject(
-  HANDLE hHandle,
-  DWORD  dwMilliseconds
-);
+    def RtlNtStatusToDosError(self, status: int, /) -> ErrorCodes: ...
 
-DWORD WaitForMultipleObjects(
-  DWORD        nCount,
-  HANDLE       *lpHandles,
-  BOOL         bWaitAll,
-  DWORD        dwMilliseconds
-);
 
-ULONG RtlNtStatusToDosError(
-  NTSTATUS Status
-);
+class _Ws2(Protocol):
+    """Statically typed version of the ws2_32.dll functions we use."""
 
-int WSAIoctl(
-  SOCKET                             s,
-  DWORD                              dwIoControlCode,
-  LPVOID                             lpvInBuffer,
-  DWORD                              cbInBuffer,
-  LPVOID                             lpvOutBuffer,
-  DWORD                              cbOutBuffer,
-  LPDWORD                            lpcbBytesReturned,
-  LPWSAOVERLAPPED                    lpOverlapped,
-  // actually LPWSAOVERLAPPED_COMPLETION_ROUTINE
-  void* lpCompletionRoutine
-);
+    def WSAGetLastError(self) -> int: ...
 
-int WSAGetLastError();
+    def WSAIoctl(
+        self,
+        socket: CData,
+        dwIoControlCode: WSAIoctls,
+        lpvInBuffer: AlwaysNull,
+        cbInBuffer: int,
+        lpvOutBuffer: CData,
+        cbOutBuffer: int,
+        lpcbBytesReturned: CData,  # int*
+        lpOverlapped: AlwaysNull,
+        # actually LPWSAOVERLAPPED_COMPLETION_ROUTINE
+        lpCompletionRoutine: AlwaysNull,
+        /,
+    ) -> int: ...
 
-BOOL DeviceIoControl(
-  HANDLE       hDevice,
-  DWORD        dwIoControlCode,
-  LPVOID       lpInBuffer,
-  DWORD        nInBufferSize,
-  LPVOID       lpOutBuffer,
-  DWORD        nOutBufferSize,
-  LPDWORD      lpBytesReturned,
-  LPOVERLAPPED lpOverlapped
-);
 
-// From https://github.com/piscisaureus/wepoll/blob/master/src/afd.h
-typedef struct _AFD_POLL_HANDLE_INFO {
-  HANDLE Handle;
-  ULONG Events;
-  NTSTATUS Status;
-} AFD_POLL_HANDLE_INFO, *PAFD_POLL_HANDLE_INFO;
+class _DummyStruct(Protocol):
+    Offset: int
+    OffsetHigh: int
 
-// This is really defined as a messy union to allow stuff like
-// i.DUMMYSTRUCTNAME.LowPart, but we don't need those complications.
-// Under all that it's just an int64.
-typedef int64_t LARGE_INTEGER;
 
-typedef struct _AFD_POLL_INFO {
-  LARGE_INTEGER Timeout;
-  ULONG NumberOfHandles;
-  ULONG Exclusive;
-  AFD_POLL_HANDLE_INFO Handles[1];
-} AFD_POLL_INFO, *PAFD_POLL_INFO;
+class _DummyUnion(Protocol):
+    DUMMYSTRUCTNAME: _DummyStruct
+    Pointer: object
 
-"""
 
-# cribbed from pywincffi
-# programmatically strips out those annotations MSDN likes, like _In_
-REGEX_SAL_ANNOTATION = re.compile(
-    r"\b(_In_|_Inout_|_Out_|_Outptr_|_Reserved_)(opt_)?\b"
-)
-LIB = REGEX_SAL_ANNOTATION.sub(" ", LIB)
+class _Overlapped(Protocol):
+    Internal: int
+    InternalHigh: int
+    DUMMYUNIONNAME: _DummyUnion
+    hEvent: Handle
 
-# Other fixups:
-# - get rid of FAR, cffi doesn't like it
-LIB = re.sub(r"\bFAR\b", " ", LIB)
-# - PASCAL is apparently an alias for __stdcall (on modern compilers - modern
-#   being _MSC_VER >= 800)
-LIB = re.sub(r"\bPASCAL\b", "__stdcall", LIB)
 
-ffi = cffi.FFI()
-ffi.cdef(LIB)
-
-kernel32 = ffi.dlopen("kernel32.dll")
-ntdll = ffi.dlopen("ntdll.dll")
-ws2_32 = ffi.dlopen("ws2_32.dll")
+kernel32 = cast("_Kernel32", ffi.dlopen("kernel32.dll"))
+ntdll = cast("_Nt", ffi.dlopen("ntdll.dll"))
+ws2_32 = cast("_Ws2", ffi.dlopen("ws2_32.dll"))
 
 ################################################################
 # Magic numbers
@@ -229,7 +200,7 @@ ws2_32 = ffi.dlopen("ws2_32.dll")
 #   https://www.magnumdb.com
 # (Tip: check the box to see "Hex value")
 
-INVALID_HANDLE_VALUE = ffi.cast("HANDLE", -1)
+INVALID_HANDLE_VALUE = Handle(ffi.cast("HANDLE", -1))
 
 
 class ErrorCodes(enum.IntEnum):
@@ -242,12 +213,12 @@ class ErrorCodes(enum.IntEnum):
     ERROR_OPERATION_ABORTED = 995
     ERROR_ABANDONED_WAIT_0 = 735
     ERROR_INVALID_HANDLE = 6
-    ERROR_INVALID_PARMETER = 87
+    ERROR_INVALID_PARAMETER = 87
     ERROR_NOT_FOUND = 1168
     ERROR_NOT_SOCKET = 10038
 
 
-class FileFlags(enum.IntEnum):
+class FileFlags(enum.IntFlag):
     GENERIC_READ = 0x80000000
     SYNCHRONIZE = 0x00100000
     FILE_FLAG_OVERLAPPED = 0x40000000
@@ -301,23 +272,42 @@ class IoControlCodes(enum.IntEnum):
 ################################################################
 
 
-def _handle(obj):
+def _handle(obj: int | CData) -> Handle:
     # For now, represent handles as either cffi HANDLEs or as ints.  If you
     # try to pass in a file descriptor instead, it's not going to work
     # out. (For that msvcrt.get_osfhandle does the trick, but I don't know if
     # we'll actually need that for anything...) For sockets this doesn't
     # matter, Python never allocates an fd. So let's wait until we actually
     # encounter the problem before worrying about it.
-    if type(obj) is int:
-        return ffi.cast("HANDLE", obj)
-    else:
-        return obj
+    if isinstance(obj, int):
+        return Handle(ffi.cast("HANDLE", obj))
+    return Handle(obj)
 
 
-def raise_winerror(winerror=None, *, filename=None, filename2=None):
+def handle_array(count: int) -> HandleArray:
+    """Make an array of handles."""
+    return HandleArray(ffi.new(f"HANDLE[{count}]"))
+
+
+def raise_winerror(
+    winerror: int | None = None,
+    *,
+    filename: str | None = None,
+    filename2: str | None = None,
+) -> NoReturn:
+    # assert sys.platform == "win32"  # TODO: make this work in MyPy
+    # ... in the meanwhile, ffi.getwinerror() is undefined on non-Windows, necessitating the type
+    # ignores.
+
     if winerror is None:
-        winerror, msg = ffi.getwinerror()
+        err = ffi.getwinerror()  # type: ignore[attr-defined,unused-ignore]
+        if err is None:
+            raise RuntimeError("No error set?")
+        winerror, msg = err
     else:
-        _, msg = ffi.getwinerror(winerror)
+        err = ffi.getwinerror(winerror)  # type: ignore[attr-defined,unused-ignore]
+        if err is None:
+            raise RuntimeError("No error set?")
+        _, msg = err
     # https://docs.python.org/3/library/exceptions.html#OSError
     raise OSError(0, msg, filename, winerror, filename2)

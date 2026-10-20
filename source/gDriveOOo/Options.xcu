@@ -2,7 +2,7 @@
 <!--
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -24,20 +24,25 @@
 ║                                                                                    ║
 ╚════════════════════════════════════════════════════════════════════════════════════╝
 -->
-<oor:component-data oor:name="gDriveOOo" oor:package="io.github.prrvchr"
-  xsi:schemaLocation="http://openoffice.org/2001/registry/component-update.xsd"
-  xmlns:xs="http://www.w3.org/2001/XMLSchema"
+<!DOCTYPE oor:component-data SYSTEM "component-update.dtd">
+<oor:component-data
+  xmlns:install="http://openoffice.org/2004/installation"
   xmlns:oor="http://openoffice.org/2001/registry"
-  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  xmlns:xs="http://www.w3.org/2001/XMLSchema"
+  oor:package="io.github.prrvchr"
+  oor:name="gDriveOOo">
+  <prop oor:name="ResetSync">
+    <value>0</value>
+  </prop>
   <prop oor:name="SupportShare">
-    <value>false</value>
+    <value>true</value>
   </prop>
   <prop oor:name="SharedDocuments">
-    <value>false</value>
+    <value>true</value>
   </prop>
   <prop oor:name="SharedFolderName">
-    <value xml:lang="en">Shared drives</value>
-    <value xml:lang="fr">Lecteurs partagés</value>
+    <value xml:lang="en">Shared with me</value>
+    <value xml:lang="fr">Partagés avec moi</value>
   </prop>
   <prop oor:name="ReplicateTimeout">
     <value>600</value>
@@ -73,3 +78,4 @@
     </node>
   </node>
 </oor:component-data>
+

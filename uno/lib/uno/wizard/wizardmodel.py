@@ -4,7 +4,7 @@
 """
 ╔════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                    ║
-║   Copyright (c) 2020 https://prrvchr.github.io                                     ║
+║   Copyright (c) 2020-25 https://prrvchr.github.io                                  ║
 ║                                                                                    ║
 ║   Permission is hereby granted, free of charge, to any person obtaining            ║
 ║   a copy of this software and associated documentation files (the "Software"),     ║
@@ -30,10 +30,10 @@
 import uno
 import unohelper
 
-from ..unotool import getStringResource
+from ...unotool import getStringResource
+from ...unotool import hasInterface
 
-from ..configuration import g_identifier
-from ..configuration import g_extension
+from ...configuration import g_identifier
 
 import traceback
 
@@ -44,8 +44,14 @@ class WizardModel(unohelper.Base):
         self._currentPageId = -1
         self._disabledPages = []
         self._roadmap = None
-        self._resolver = getStringResource(ctx, g_identifier, g_extension)
+        self._resolver = getStringResource(ctx, g_identifier, 'dialogs', 'Wizard')
         self._resources = {'Roadmap': 'Wizard.Roadmap.Text'}
+
+    def dispose(self):
+        interface = 'com.sun.star.lang.XComponent'
+        for page in self._pages.values():
+            if page and hasInterface(page, interface):
+                page.dispose()
 
     def setRoadmapModel(self, model):
         self._roadmap = model

@@ -1,17 +1,31 @@
+from __future__ import annotations
+
+import random
+import select
+import socket as stdlib_socket
+import sys
+from collections.abc import Awaitable, Callable
+from contextlib import suppress
+from typing import TYPE_CHECKING, TypeVar
+
 import pytest
 
-import socket as stdlib_socket
-import random
-from contextlib import suppress
+import trio
 
 from ... import _core
-from ...testing import wait_all_tasks_blocked, assert_checkpoints
-import trio
+from ...testing import assert_checkpoints, wait_all_tasks_blocked
 
 # Cross-platform tests for IO handling
 
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
-def fill_socket(sock):
+    from typing_extensions import ParamSpec
+
+    ArgsT = ParamSpec("ArgsT")
+
+
+def fill_socket(sock: stdlib_socket.socket) -> None:
     try:
         while True:
             sock.send(b"x" * 65536)
@@ -19,7 +33,7 @@ def fill_socket(sock):
         pass
 
 
-def drain_socket(sock):
+def drain_socket(sock: stdlib_socket.socket) -> None:
     try:
         while True:
             sock.recv(65536)
@@ -27,8 +41,13 @@ def drain_socket(sock):
         pass
 
 
+WaitSocket = Callable[[stdlib_socket.socket], Awaitable[object]]
+SocketPair = tuple[stdlib_socket.socket, stdlib_socket.socket]
+RetT = TypeVar("RetT")
+
+
 @pytest.fixture
-def socketpair():
+def socketpair() -> Generator[SocketPair, None, None]:
     pair = stdlib_socket.socketpair()
     for sock in pair:
         sock.setblocking(False)
@@ -37,38 +56,35 @@ def socketpair():
         sock.close()
 
 
-def using_fileno(fn):
-    def fileno_wrapper(fileobj):
+def also_using_fileno(
+    fn: Callable[[stdlib_socket.socket | int], RetT],
+) -> list[Callable[[stdlib_socket.socket], RetT]]:
+    def fileno_wrapper(fileobj: stdlib_socket.socket) -> RetT:
         return fn(fileobj.fileno())
 
     name = f"<{fn.__name__} on fileno>"
     fileno_wrapper.__name__ = fileno_wrapper.__qualname__ = name
-    return fileno_wrapper
+    return [fn, fileno_wrapper]
 
-
-wait_readable_options = [trio.lowlevel.wait_readable]
-wait_writable_options = [trio.lowlevel.wait_writable]
-notify_closing_options = [trio.lowlevel.notify_closing]
-
-for options_list in [
-    wait_readable_options,
-    wait_writable_options,
-    notify_closing_options,
-]:
-    options_list += [using_fileno(f) for f in options_list]
 
 # Decorators that feed in different settings for wait_readable / wait_writable
 # / notify_closing.
 # Note that if you use all three decorators on the same test, it will run all
 # N**3 *combinations*
 read_socket_test = pytest.mark.parametrize(
-    "wait_readable", wait_readable_options, ids=lambda fn: fn.__name__
+    "wait_readable",
+    also_using_fileno(trio.lowlevel.wait_readable),
+    ids=lambda fn: fn.__name__,
 )
 write_socket_test = pytest.mark.parametrize(
-    "wait_writable", wait_writable_options, ids=lambda fn: fn.__name__
+    "wait_writable",
+    also_using_fileno(trio.lowlevel.wait_writable),
+    ids=lambda fn: fn.__name__,
 )
 notify_closing_test = pytest.mark.parametrize(
-    "notify_closing", notify_closing_options, ids=lambda fn: fn.__name__
+    "notify_closing",
+    also_using_fileno(trio.lowlevel.notify_closing),
+    ids=lambda fn: fn.__name__,
 )
 
 
@@ -77,7 +93,11 @@ notify_closing_test = pytest.mark.parametrize(
 # momentarily and then immediately resuming.
 @read_socket_test
 @write_socket_test
-async def test_wait_basic(socketpair, wait_readable, wait_writable):
+async def test_wait_basic(
+    socketpair: SocketPair,
+    wait_readable: WaitSocket,
+    wait_writable: WaitSocket,
+) -> None:
     a, b = socketpair
 
     # They start out writable()
@@ -87,7 +107,7 @@ async def test_wait_basic(socketpair, wait_readable, wait_writable):
     # But readable() blocks until data arrives
     record = []
 
-    async def block_on_read():
+    async def block_on_read() -> None:
         try:
             with assert_checkpoints():
                 await wait_readable(a)
@@ -110,7 +130,7 @@ async def test_wait_basic(socketpair, wait_readable, wait_writable):
         await wait_readable(b)
     record = []
 
-    async def block_on_write():
+    async def block_on_write() -> None:
         try:
             with assert_checkpoints():
                 await wait_writable(a)
@@ -143,8 +163,8 @@ async def test_wait_basic(socketpair, wait_readable, wait_writable):
 
 
 @read_socket_test
-async def test_double_read(socketpair, wait_readable):
-    a, b = socketpair
+async def test_double_read(socketpair: SocketPair, wait_readable: WaitSocket) -> None:
+    a, _b = socketpair
 
     # You can't have two tasks trying to read from a socket at the same time
     async with _core.open_nursery() as nursery:
@@ -156,8 +176,8 @@ async def test_double_read(socketpair, wait_readable):
 
 
 @write_socket_test
-async def test_double_write(socketpair, wait_writable):
-    a, b = socketpair
+async def test_double_write(socketpair: SocketPair, wait_writable: WaitSocket) -> None:
+    a, _b = socketpair
 
     # You can't have two tasks trying to write to a socket at the same time
     fill_socket(a)
@@ -173,15 +193,18 @@ async def test_double_write(socketpair, wait_writable):
 @write_socket_test
 @notify_closing_test
 async def test_interrupted_by_close(
-    socketpair, wait_readable, wait_writable, notify_closing
-):
-    a, b = socketpair
+    socketpair: SocketPair,
+    wait_readable: WaitSocket,
+    wait_writable: WaitSocket,
+    notify_closing: Callable[[stdlib_socket.socket], object],
+) -> None:
+    a, _b = socketpair
 
-    async def reader():
+    async def reader() -> None:
         with pytest.raises(_core.ClosedResourceError):
             await wait_readable(a)
 
-    async def writer():
+    async def writer() -> None:
         with pytest.raises(_core.ClosedResourceError):
             await wait_writable(a)
 
@@ -196,14 +219,18 @@ async def test_interrupted_by_close(
 
 @read_socket_test
 @write_socket_test
-async def test_socket_simultaneous_read_write(socketpair, wait_readable, wait_writable):
-    record = []
+async def test_socket_simultaneous_read_write(
+    socketpair: SocketPair,
+    wait_readable: WaitSocket,
+    wait_writable: WaitSocket,
+) -> None:
+    record: list[str] = []
 
-    async def r_task(sock):
+    async def r_task(sock: stdlib_socket.socket) -> None:
         await wait_readable(sock)
         record.append("r_task")
 
-    async def w_task(sock):
+    async def w_task(sock: stdlib_socket.socket) -> None:
         await wait_writable(sock)
         record.append("w_task")
 
@@ -224,7 +251,11 @@ async def test_socket_simultaneous_read_write(socketpair, wait_readable, wait_wr
 
 @read_socket_test
 @write_socket_test
-async def test_socket_actual_streaming(socketpair, wait_readable, wait_writable):
+async def test_socket_actual_streaming(
+    socketpair: SocketPair,
+    wait_readable: WaitSocket,
+    wait_writable: WaitSocket,
+) -> None:
     a, b = socketpair
 
     # Use a small send buffer on one of the sockets to increase the chance of
@@ -234,9 +265,9 @@ async def test_socket_actual_streaming(socketpair, wait_readable, wait_writable)
     N = 1000000  # 1 megabyte
     MAX_CHUNK = 65536
 
-    results = {}
+    results: dict[str, int] = {}
 
-    async def sender(sock, seed, key):
+    async def sender(sock: stdlib_socket.socket, seed: int, key: str) -> None:
         r = random.Random(seed)
         sent = 0
         while sent < N:
@@ -251,7 +282,7 @@ async def test_socket_actual_streaming(socketpair, wait_readable, wait_writable)
         sock.shutdown(stdlib_socket.SHUT_WR)
         results[key] = sent
 
-    async def receiver(sock, key):
+    async def receiver(sock: stdlib_socket.socket, key: str) -> None:
         received = 0
         while True:
             print("received", received)
@@ -273,7 +304,7 @@ async def test_socket_actual_streaming(socketpair, wait_readable, wait_writable)
     assert results["send_b"] == results["recv_a"]
 
 
-async def test_notify_closing_on_invalid_object():
+async def test_notify_closing_on_invalid_object() -> None:
     # It should either be a no-op (generally on Unix, where we don't know
     # which fds are valid), or an OSError (on Windows, where we currently only
     # support sockets, so we have to do some validation to figure out whether
@@ -289,7 +320,7 @@ async def test_notify_closing_on_invalid_object():
     assert got_oserror or got_no_error
 
 
-async def test_wait_on_invalid_object():
+async def test_wait_on_invalid_object() -> None:
     # We definitely want to raise an error everywhere if you pass in an
     # invalid fd to wait_*
     for wait in [trio.lowlevel.wait_readable, trio.lowlevel.wait_writable]:
@@ -297,20 +328,24 @@ async def test_wait_on_invalid_object():
             fileno = s.fileno()
         # We just closed the socket and don't do anything else in between, so
         # we can be confident that the fileno hasn't be reassigned.
-        with pytest.raises(OSError):
+        with pytest.raises(
+            OSError,
+            match=r"^\[\w+ \d+] (Bad file descriptor|An operation was attempted on something that is not a socket)$",
+        ):
             await wait(fileno)
 
 
-async def test_io_manager_statistics():
-    def check(*, expected_readers, expected_writers):
+async def test_io_manager_statistics() -> None:
+    def check(*, expected_readers: int, expected_writers: int) -> None:
         statistics = _core.current_statistics()
         print(statistics)
         iostats = statistics.io_statistics
-        if iostats.backend in ["epoll", "windows"]:
+        if iostats.backend == "epoll" or iostats.backend == "windows":
             assert iostats.tasks_waiting_read == expected_readers
             assert iostats.tasks_waiting_write == expected_writers
         else:
             assert iostats.backend == "kqueue"
+            assert iostats.monitors == 0
             assert iostats.tasks_waiting == expected_readers + expected_writers
 
     a1, b1 = stdlib_socket.socketpair()
@@ -349,7 +384,45 @@ async def test_io_manager_statistics():
         check(expected_readers=1, expected_writers=0)
 
 
-async def test_can_survive_unnotified_close():
+@pytest.mark.filterwarnings("ignore:.*UnboundedQueue:trio.TrioDeprecationWarning")
+async def test_io_manager_kqueue_monitors_statistics() -> None:
+    def check(
+        *,
+        expected_monitors: int,
+        expected_readers: int,
+        expected_writers: int,
+    ) -> None:
+        statistics = _core.current_statistics()
+        print(statistics)
+        iostats = statistics.io_statistics
+        assert iostats.backend == "kqueue"
+        assert iostats.monitors == expected_monitors
+        assert iostats.tasks_waiting == expected_readers + expected_writers
+
+    a1, b1 = stdlib_socket.socketpair()
+    for sock in [a1, b1]:
+        sock.setblocking(False)
+
+    with a1, b1:
+        # let the call_soon_task settle down
+        await wait_all_tasks_blocked()
+
+        if sys.platform != "win32" and sys.platform != "linux":
+            # 1 for call_soon_task
+            check(expected_monitors=0, expected_readers=1, expected_writers=0)
+
+            with _core.monitor_kevent(a1.fileno(), select.KQ_FILTER_READ):
+                with (
+                    pytest.raises(_core.BusyResourceError),
+                    _core.monitor_kevent(a1.fileno(), select.KQ_FILTER_READ),
+                ):
+                    pass  # pragma: no cover
+                check(expected_monitors=1, expected_readers=1, expected_writers=0)
+
+            check(expected_monitors=0, expected_readers=1, expected_writers=0)
+
+
+async def test_can_survive_unnotified_close() -> None:
     # An "unnotified" close is when the user closes an fd/socket/handle
     # directly, without calling notify_closing first. This should never happen
     # -- users should call notify_closing before closing things. But, just in
@@ -367,9 +440,13 @@ async def test_can_survive_unnotified_close():
     # This test exercises some tricky "unnotified close" scenarios, to make
     # sure we get the "acceptable" behaviors.
 
-    async def allow_OSError(async_func, *args):
+    async def allow_OSError(
+        async_func: Callable[ArgsT, Awaitable[object]],
+        *args: ArgsT.args,
+        **kwargs: ArgsT.kwargs,
+    ) -> None:
         with suppress(OSError):
-            await async_func(*args)
+            await async_func(*args, **kwargs)
 
     with stdlib_socket.socket() as s:
         async with trio.open_nursery() as nursery:
@@ -399,7 +476,7 @@ async def test_can_survive_unnotified_close():
     # do that has been pulled out from under our feet... so test that we can
     # survive this.
     a, b = stdlib_socket.socketpair()
-    with a, b, a.dup() as a2:  # noqa: F841
+    with a, b, a.dup() as a2:
         a.setblocking(False)
         b.setblocking(False)
         fill_socket(a)
@@ -414,7 +491,7 @@ async def test_can_survive_unnotified_close():
     # arriving, not a cancellation, so the operation gets re-issued from
     # handle_io context rather than abort context.
     a, b = stdlib_socket.socketpair()
-    with a, b, a.dup() as a2:  # noqa: F841
+    with a, b, a.dup() as a2:
         print(f"a={a.fileno()}, b={b.fileno()}, a2={a2.fileno()}")
         a.setblocking(False)
         b.setblocking(False)
@@ -427,7 +504,7 @@ async def test_can_survive_unnotified_close():
         # sleep waiting on 'a2', with the idea that the 'a2' notification will
         # definitely arrive, and when it does then we can assume that whatever
         # notification was going to arrive for 'a' has also arrived.
-        async def wait_readable_a2_then_set():
+        async def wait_readable_a2_then_set() -> None:
             await trio.lowlevel.wait_readable(a2)
             e.set()
 

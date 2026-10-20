@@ -1,18 +1,26 @@
+from __future__ import annotations
+
+import re
+import weakref
+from collections.abc import Callable
+from typing import TypeAlias
+
 import pytest
 
-import weakref
-
-from ..testing import wait_all_tasks_blocked, assert_checkpoints
-
 from .. import _core
-from .._timeouts import sleep_forever
+from .._core._parking_lot import GLOBAL_PARKING_LOT_BREAKER
 from .._sync import *
+from .._timeouts import sleep_forever
+from ..testing import assert_checkpoints, wait_all_tasks_blocked
 
 
-async def test_Event():
+async def test_Event() -> None:
     e = Event()
     assert not e.is_set()
     assert e.statistics().tasks_waiting == 0
+
+    with pytest.raises(NotImplementedError):
+        e.__bool__()
 
     e.set()
     assert e.is_set()
@@ -23,7 +31,7 @@ async def test_Event():
 
     record = []
 
-    async def child():
+    async def child() -> None:
         record.append("sleeping")
         await e.wait()
         record.append("woken")
@@ -39,10 +47,11 @@ async def test_Event():
         assert record == ["sleeping", "sleeping", "woken", "woken"]
 
 
-async def test_CapacityLimiter():
+async def test_CapacityLimiter() -> None:
+    assert CapacityLimiter(0).total_tokens == 0
     with pytest.raises(TypeError):
         CapacityLimiter(1.0)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"^total_tokens must be >= 0$"):
         CapacityLimiter(-1)
     c = CapacityLimiter(2)
     repr(c)  # smoke test
@@ -108,7 +117,7 @@ async def test_CapacityLimiter():
     c.release_on_behalf_of("value 1")
 
 
-async def test_CapacityLimiter_inf():
+async def test_CapacityLimiter_inf() -> None:
     from math import inf
 
     c = CapacityLimiter(inf)
@@ -124,16 +133,16 @@ async def test_CapacityLimiter_inf():
     assert c.available_tokens == inf
 
 
-async def test_CapacityLimiter_change_total_tokens():
+async def test_CapacityLimiter_change_total_tokens() -> None:
     c = CapacityLimiter(2)
 
     with pytest.raises(TypeError):
         c.total_tokens = 1.0
 
-    with pytest.raises(ValueError):
-        c.total_tokens = 0
+    with pytest.raises(ValueError, match=r"^total_tokens must be >= 0$"):
+        c.total_tokens = -1
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"^total_tokens must be >= 0$"):
         c.total_tokens = -10
 
     assert c.total_tokens == 2
@@ -161,7 +170,7 @@ async def test_CapacityLimiter_change_total_tokens():
 
 
 # regression test for issue #548
-async def test_CapacityLimiter_memleak_548():
+async def test_CapacityLimiter_memleak_548() -> None:
     limiter = CapacityLimiter(total_tokens=1)
     await limiter.acquire()
 
@@ -175,10 +184,87 @@ async def test_CapacityLimiter_memleak_548():
     assert len(limiter._pending_borrowers) == 0
 
 
-async def test_Semaphore():
+async def test_CapacityLimiter_zero_limit_tokens() -> None:
+    c = CapacityLimiter(5)
+
+    assert c.total_tokens == 5
+
+    async with _core.open_nursery() as nursery:
+        c.total_tokens = 0
+
+        for i in range(5):
+            nursery.start_soon(c.acquire_on_behalf_of, i)
+            await wait_all_tasks_blocked()
+
+        assert set(c.statistics().borrowers) == set()
+        assert c.statistics().tasks_waiting == 5
+
+        c.total_tokens = 5
+
+        assert set(c.statistics().borrowers) == {0, 1, 2, 3, 4}
+
+        nursery.start_soon(c.acquire_on_behalf_of, 5)
+        await wait_all_tasks_blocked()
+
+        assert c.statistics().tasks_waiting == 1
+
+        for i in range(5):
+            c.release_on_behalf_of(i)
+
+        assert c.statistics().tasks_waiting == 0
+        c.release_on_behalf_of(5)
+
+        # making sure that zero limit capacity limiter doesn't let any tasks through
+
+        c.total_tokens = 0
+
+        with pytest.raises(_core.WouldBlock):
+            c.acquire_nowait()
+
+        nursery.start_soon(c.acquire_on_behalf_of, 6)
+        await wait_all_tasks_blocked()
+
+        assert c.statistics().tasks_waiting == 1
+        assert c.statistics().borrowers == []
+
+        c.total_tokens = 1
+        assert c.statistics().tasks_waiting == 0
+        assert c.statistics().borrowers == [6]
+        c.release_on_behalf_of(6)
+
+        await c.acquire_on_behalf_of(0)  # total_tokens is 1
+
+        nursery.start_soon(c.acquire_on_behalf_of, 1)
+        await wait_all_tasks_blocked()
+        c.total_tokens = 0
+
+        assert c.statistics().borrowers == [0]
+
+        c.release_on_behalf_of(0)
+        await wait_all_tasks_blocked()
+        assert c.statistics().borrowers == []
+        assert c.statistics().tasks_waiting == 1
+
+        c.total_tokens = 1
+        await wait_all_tasks_blocked()
+        assert c.statistics().borrowers == [1]
+        assert c.statistics().tasks_waiting == 0
+
+        c.release_on_behalf_of(1)
+
+        c.total_tokens = 0
+
+        nursery.cancel_scope.cancel()
+
+    assert c.total_tokens == 0
+    assert c.statistics().borrowers == []
+    assert c._pending_borrowers == {}
+
+
+async def test_Semaphore() -> None:
     with pytest.raises(TypeError):
-        Semaphore(1.0)
-    with pytest.raises(ValueError):
+        Semaphore(1.0)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match=r"^initial value must be >= 0$"):
         Semaphore(-1)
     s = Semaphore(1)
     repr(s)  # smoke test
@@ -205,7 +291,7 @@ async def test_Semaphore():
 
     record = []
 
-    async def do_acquire(s):
+    async def do_acquire(s: Semaphore) -> None:
         record.append("started")
         await s.acquire()
         record.append("finished")
@@ -223,15 +309,15 @@ async def test_Semaphore():
     assert record == ["started", "finished"]
 
 
-async def test_Semaphore_bounded():
+def test_Semaphore_bounded() -> None:
     with pytest.raises(TypeError):
-        Semaphore(1, max_value=1.0)
-    with pytest.raises(ValueError):
+        Semaphore(1, max_value=1.0)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match=r"^max_values must be >= initial_value$"):
         Semaphore(2, max_value=1)
     bs = Semaphore(1, max_value=1)
     assert bs.max_value == 1
     repr(bs)  # smoke test
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"^semaphore released too many times$"):
         bs.release()
     assert bs.value == 1
     bs.acquire_nowait()
@@ -241,7 +327,9 @@ async def test_Semaphore_bounded():
 
 
 @pytest.mark.parametrize("lockcls", [Lock, StrictFIFOLock], ids=lambda fn: fn.__name__)
-async def test_Lock_and_StrictFIFOLock(lockcls):
+async def test_Lock_and_StrictFIFOLock(
+    lockcls: type[Lock | StrictFIFOLock],
+) -> None:
     l = lockcls()  # noqa
     assert not l.locked()
 
@@ -278,7 +366,7 @@ async def test_Lock_and_StrictFIFOLock(lockcls):
 
     holder_task = None
 
-    async def holder():
+    async def holder() -> None:
         nonlocal holder_task
         holder_task = _core.current_task()
         async with l:
@@ -316,11 +404,11 @@ async def test_Lock_and_StrictFIFOLock(lockcls):
     assert statistics.tasks_waiting == 0
 
 
-async def test_Condition():
+async def test_Condition() -> None:
     with pytest.raises(TypeError):
-        Condition(Semaphore(1))
+        Condition(Semaphore(1))  # type: ignore[arg-type]
     with pytest.raises(TypeError):
-        Condition(StrictFIFOLock)
+        Condition(StrictFIFOLock)  # type: ignore[arg-type]
     l = Lock()  # noqa
     c = Condition(l)
     assert not l.locked()
@@ -350,7 +438,7 @@ async def test_Condition():
 
     finished_waiters = set()
 
-    async def waiter(i):
+    async def waiter(i: int) -> None:
         async with c:
             await c.wait()
         finished_waiters.add(i)
@@ -400,64 +488,64 @@ async def test_Condition():
                 assert c.locked()
 
 
-from .._sync import AsyncContextManagerMixin
 from .._channel import open_memory_channel
+from .._sync import AsyncContextManagerMixin
 
 # Three ways of implementing a Lock in terms of a channel. Used to let us put
 # the channel through the generic lock tests.
 
 
 class ChannelLock1(AsyncContextManagerMixin):
-    def __init__(self, capacity):
-        self.s, self.r = open_memory_channel(capacity)
+    def __init__(self, capacity: int) -> None:
+        self.s, self.r = open_memory_channel[None](capacity)
         for _ in range(capacity - 1):
             self.s.send_nowait(None)
 
-    def acquire_nowait(self):
+    def acquire_nowait(self) -> None:
         self.s.send_nowait(None)
 
-    async def acquire(self):
+    async def acquire(self) -> None:
         await self.s.send(None)
 
-    def release(self):
+    def release(self) -> None:
         self.r.receive_nowait()
 
 
 class ChannelLock2(AsyncContextManagerMixin):
-    def __init__(self):
-        self.s, self.r = open_memory_channel(10)
+    def __init__(self) -> None:
+        self.s, self.r = open_memory_channel[None](10)
         self.s.send_nowait(None)
 
-    def acquire_nowait(self):
+    def acquire_nowait(self) -> None:
         self.r.receive_nowait()
 
-    async def acquire(self):
+    async def acquire(self) -> None:
         await self.r.receive()
 
-    def release(self):
+    def release(self) -> None:
         self.s.send_nowait(None)
 
 
 class ChannelLock3(AsyncContextManagerMixin):
-    def __init__(self):
-        self.s, self.r = open_memory_channel(0)
+    def __init__(self) -> None:
+        self.s, self.r = open_memory_channel[None](0)
         # self.acquired is true when one task acquires the lock and
         # only becomes false when it's released and no tasks are
         # waiting to acquire.
         self.acquired = False
 
-    def acquire_nowait(self):
+    def acquire_nowait(self) -> None:
         assert not self.acquired
         self.acquired = True
 
-    async def acquire(self):
+    async def acquire(self) -> None:
         if self.acquired:
             await self.s.send(None)
         else:
             self.acquired = True
             await _core.checkpoint()
 
-    def release(self):
+    def release(self) -> None:
         try:
             self.r.receive_nowait()
         except _core.WouldBlock:
@@ -487,20 +575,33 @@ lock_factory_names = [
 ]
 
 generic_lock_test = pytest.mark.parametrize(
-    "lock_factory", lock_factories, ids=lock_factory_names
+    "lock_factory",
+    lock_factories,
+    ids=lock_factory_names,
 )
+
+LockLike: TypeAlias = (
+    CapacityLimiter
+    | Semaphore
+    | Lock
+    | StrictFIFOLock
+    | ChannelLock1
+    | ChannelLock2
+    | ChannelLock3
+)
+LockFactory: TypeAlias = Callable[[], LockLike]
 
 
 # Spawn a bunch of workers that take a lock and then yield; make sure that
 # only one worker is ever in the critical section at a time.
 @generic_lock_test
-async def test_generic_lock_exclusion(lock_factory):
+async def test_generic_lock_exclusion(lock_factory: LockFactory) -> None:
     LOOPS = 10
     WORKERS = 5
     in_critical_section = False
     acquires = 0
 
-    async def worker(lock_like):
+    async def worker(lock_like: LockLike) -> None:
         nonlocal in_critical_section, acquires
         for _ in range(LOOPS):
             async with lock_like:
@@ -523,12 +624,12 @@ async def test_generic_lock_exclusion(lock_factory):
 # Several workers queue on the same lock; make sure they each get it, in
 # order.
 @generic_lock_test
-async def test_generic_lock_fifo_fairness(lock_factory):
+async def test_generic_lock_fifo_fairness(lock_factory: LockFactory) -> None:
     initial_order = []
     record = []
     LOOPS = 5
 
-    async def loopy(name, lock_like):
+    async def loopy(name: int, lock_like: LockLike) -> None:
         # Record the order each task was initially scheduled in
         initial_order.append(name)
         for _ in range(LOOPS):
@@ -547,12 +648,14 @@ async def test_generic_lock_fifo_fairness(lock_factory):
 
 
 @generic_lock_test
-async def test_generic_lock_acquire_nowait_blocks_acquire(lock_factory):
+async def test_generic_lock_acquire_nowait_blocks_acquire(
+    lock_factory: LockFactory,
+) -> None:
     lock_like = lock_factory()
 
     record = []
 
-    async def lock_taker():
+    async def lock_taker() -> None:
         record.append("started")
         async with lock_like:
             pass
@@ -564,3 +667,66 @@ async def test_generic_lock_acquire_nowait_blocks_acquire(lock_factory):
         await wait_all_tasks_blocked()
         assert record == ["started"]
         lock_like.release()
+
+
+async def test_lock_acquire_unowned_lock() -> None:
+    """Test that trying to acquire a lock whose owner has exited raises an error.
+    see https://github.com/python-trio/trio/issues/3035
+    """
+    assert not GLOBAL_PARKING_LOT_BREAKER
+    lock = trio.Lock()
+    async with trio.open_nursery() as nursery:
+        nursery.start_soon(lock.acquire)
+    owner_str = re.escape(str(lock._lot.broken_by[0]))
+    with pytest.raises(
+        trio.BrokenResourceError,
+        match=f"^Owner of this lock exited without releasing: {owner_str}$",
+    ):
+        await lock.acquire()
+    assert not GLOBAL_PARKING_LOT_BREAKER
+
+
+async def test_lock_multiple_acquire() -> None:
+    """Test for error if awaiting on a lock whose owner exits without releasing.
+    see https://github.com/python-trio/trio/issues/3035"""
+    assert not GLOBAL_PARKING_LOT_BREAKER
+    lock = trio.Lock()
+    with pytest.RaisesGroup(
+        pytest.RaisesExc(
+            trio.BrokenResourceError,
+            match="^Owner of this lock exited without releasing: ",
+        ),
+    ):
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(lock.acquire)
+            nursery.start_soon(lock.acquire)
+    assert not GLOBAL_PARKING_LOT_BREAKER
+
+
+async def test_lock_handover() -> None:
+    assert not GLOBAL_PARKING_LOT_BREAKER
+    child_task: Task | None = None
+    lock = trio.Lock()
+
+    # this task acquires the lock
+    lock.acquire_nowait()
+    assert {
+        _core.current_task(): [
+            lock._lot,
+        ],
+    } == GLOBAL_PARKING_LOT_BREAKER
+
+    async with trio.open_nursery() as nursery:
+        nursery.start_soon(lock.acquire)
+        await wait_all_tasks_blocked()
+
+        # hand over the lock to the child task
+        lock.release()
+
+        # check values, and get the identifier out of the dict for later check
+        assert len(GLOBAL_PARKING_LOT_BREAKER) == 1
+        child_task = next(iter(GLOBAL_PARKING_LOT_BREAKER))
+        assert GLOBAL_PARKING_LOT_BREAKER[child_task] == [lock._lot]
+
+    assert lock._lot.broken_by == [child_task]
+    assert not GLOBAL_PARKING_LOT_BREAKER
